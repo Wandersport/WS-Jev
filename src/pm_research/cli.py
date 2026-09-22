@@ -718,9 +718,9 @@ def cmd_btc5m_shadow(args: argparse.Namespace) -> int:
         try:
             round_info = lab.contract_mgr.discover_active_round()
             max_h = max(horizons)
-            if round_info.seconds_remaining < max_h + 5:
+            if round_info.seconds_remaining < max_h + 1.0:
                 wait_sec = max(0.0, round_info.end_epoch - time.time()) + 2.0
-                print(f"  Current round {round_info.round_slug} has {round_info.seconds_remaining:.1f}s remaining (< {max_h + 5}s required).")
+                print(f"  Current round {round_info.round_slug} has {round_info.seconds_remaining:.1f}s remaining (< {max_h + 1.0}s required).")
                 print(f"  Waiting {wait_sec:.1f}s for fresh round to guarantee complete point-in-time horizon capture...")
                 time.sleep(wait_sec)
                 round_info = lab.contract_mgr.discover_active_round()

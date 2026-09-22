@@ -315,7 +315,7 @@ class BTC5mShadowLab:
     def poll_round_resolution(
         self,
         round_info: BTC5mRoundInfo,
-        poll_interval_sec: float = 10.0,
+        poll_interval_sec: float = 5.0,
         max_wait_sec: int = 300,
     ) -> BTC5mOfficialResolution | None:
         """Poll the Polymarket Data API until official settlement is available."""
