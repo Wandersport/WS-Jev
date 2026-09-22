@@ -304,10 +304,11 @@ class BTC5mContractManager:
             return None, SKIP_INCOMPLETE_ROUND_METADATA
 
         metadata_start_raw = (
-            market.get("startDate")
-            or market.get("acceptingOrdersTimestamp")
+            market.get("eventStartTime")
+            or event_data.get("startTime")
+            or event_data.get("eventStartTime")
             or market.get("startTime")
-            or event_data.get("startDate")
+            or market.get("startDate")
         )
         metadata_end_raw = (
             market.get("endDate")
