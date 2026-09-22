@@ -392,5 +392,14 @@ class ChainlinkReferenceFeed:
             finally:
                 loop.close()
 
-        th = threading.Thread(target=_worker, daemon=True, name="rtds_client")
-        th.start()
+        self._listener_thread = threading.Thread(target=_worker, daemon=True, name="rtds_client")
+        self._listener_thread.start()
+
+    def stop_background_listener(self) -> None:
+        """Stop background RTDS listener."""
+        self._running = False
+        self.status = "Stopped"
+
+    def is_connected(self) -> bool:
+        """Check if RTDS stream is currently connected."""
+        return getattr(self, "status", "") == "Connected"

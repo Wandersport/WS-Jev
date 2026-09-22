@@ -5,8 +5,9 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+import time
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
@@ -26,6 +27,7 @@ from pm_research.domain.models import (
 )
 from pm_research.research.btc5m.ablation import BTC5mAblationForecast
 from pm_research.research.btc5m.contract import BTC5mRoundInfo
+from pm_research.research.btc5m.experiment import EXPERIMENT_SPEC_HASH
 from pm_research.research.btc5m.snapshot import BTC5mFeatureSnapshot
 from pm_research.research.jev_openrouter import (
     JevCaptureRecord,
@@ -170,6 +172,24 @@ class Database:
                         cursor.execute(f"SELECT count(*) FROM {tbl}")
                         if cursor.fetchone()[0] == 0:
                             cursor.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception:
+                    pass
+            # Phase 7 migration: ensure new columns exist without dropping any data
+            phase7_migrations = [
+                ("btc5m_snapshots", "binance_open_source_timestamp_ms", "INTEGER"),
+                ("btc5m_snapshots", "binance_open_received_at_ms", "INTEGER"),
+                ("btc5m_snapshots", "binance_open_timing_offset_ms", "INTEGER"),
+                ("btc5m_snapshots", "experiment_spec_hash", "TEXT"),
+                ("btc5m_rounds", "experiment_spec_hash", "TEXT"),
+                ("btc5m_forecasts", "experiment_spec_hash", "TEXT"),
+                ("btc5m_resolution_scores", "experiment_spec_hash", "TEXT"),
+            ]
+            for tbl, col, col_type in phase7_migrations:
+                try:
+                    cursor.execute(f"PRAGMA table_info({tbl})")
+                    cols = {r[1] for r in cursor.fetchall()}
+                    if cols and col not in cols:
+                        cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
                 except Exception:
                     pass
 
@@ -440,7 +460,8 @@ class Database:
                     status TEXT NOT NULL,
                     resolved_outcome TEXT,
                     resolution_price REAL,
-                    settled_at TEXT
+                    settled_at TEXT,
+                    experiment_spec_hash TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS btc5m_snapshots (
@@ -489,9 +510,13 @@ class Database:
                     binance_return_since_open_bps REAL,
                     binance_open_mid REAL,
                     binance_open_timestamp_ms INTEGER,
+                    binance_open_source_timestamp_ms INTEGER,
+                    binance_open_received_at_ms INTEGER,
+                    binance_open_timing_offset_ms INTEGER,
                     binance_basis_bps REAL,
                     is_valid INTEGER NOT NULL,
                     skip_reason TEXT,
+                    experiment_spec_hash TEXT,
                     raw_json TEXT NOT NULL
                 );
 
@@ -523,6 +548,7 @@ class Database:
                     request_order INTEGER NOT NULL DEFAULT 1,
                     is_valid INTEGER NOT NULL DEFAULT 1,
                     rejection_reason TEXT,
+                    experiment_spec_hash TEXT,
                     UNIQUE(snapshot_id, condition)
                 );
 
@@ -553,8 +579,39 @@ class Database:
                     cond_d_prob REAL,
                     cond_d_brier REAL,
                     cond_d_log_loss REAL,
+                    experiment_spec_hash TEXT,
                     metadata_json TEXT NOT NULL,
                     UNIQUE(round_slug, target_horizon_sec)
+                );
+
+                CREATE TABLE IF NOT EXISTS btc5m_collector_heartbeat (
+                    heartbeat_id TEXT PRIMARY KEY,
+                    timestamp_utc TEXT NOT NULL,
+                    timestamp_epoch INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    current_round_slug TEXT,
+                    valid_resolved_rounds INTEGER NOT NULL,
+                    total_snapshots INTEGER NOT NULL,
+                    total_forecasts INTEGER NOT NULL,
+                    total_openrouter_cost_usd REAL NOT NULL,
+                    rtds_status TEXT NOT NULL,
+                    binance_ws_status TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    notes TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS btc5m_checkpoints (
+                    checkpoint_id TEXT PRIMARY KEY,
+                    milestone_rounds INTEGER NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    valid_resolved_rounds INTEGER NOT NULL,
+                    total_snapshots INTEGER NOT NULL,
+                    total_forecasts INTEGER NOT NULL,
+                    total_openrouter_cost_usd REAL NOT NULL,
+                    brier_scores_json TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    backup_file_path TEXT,
+                    notes TEXT
                 );
 
                 -- Indexes for fast query and integrity verification
@@ -574,6 +631,8 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_btc5m_forecasts_round ON btc5m_forecasts(round_slug);
                 CREATE INDEX IF NOT EXISTS idx_btc5m_forecasts_condition ON btc5m_forecasts(condition);
                 CREATE INDEX IF NOT EXISTS idx_btc5m_scores_round ON btc5m_resolution_scores(round_slug);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_heartbeat_time ON btc5m_collector_heartbeat(timestamp_epoch);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_checkpoints_milestone ON btc5m_checkpoints(milestone_rounds);
                 """
             )
 
@@ -1426,6 +1485,7 @@ class Database:
         resolved_outcome: str | None = None,
         resolution_price: float | None = None,
         settled_at: str | None = None,
+        experiment_spec_hash: str = EXPERIMENT_SPEC_HASH,
         conn: sqlite3.Connection | None = None,
     ) -> None:
         """Persist or update a discovered BTC 5m round contract."""
@@ -1434,10 +1494,10 @@ class Database:
                 round_slug, start_epoch, end_epoch, duration_sec, price_to_beat,
                 price_to_beat_source, up_token_id, down_token_id, up_outcome_index,
                 down_outcome_index, condition_id, question, discovered_at, status,
-                resolved_outcome, resolution_price, settled_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                resolved_outcome, resolution_price, settled_at, experiment_spec_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
-        now_utc = datetime.now().isoformat()
+        now_utc = datetime.now(timezone.utc).isoformat()
         params = (
             round_info.round_slug,
             round_info.start_epoch,
@@ -1456,6 +1516,7 @@ class Database:
             resolved_outcome,
             resolution_price,
             settled_at,
+            experiment_spec_hash,
         )
         if conn is not None:
             conn.execute(sql, params)
@@ -1477,7 +1538,7 @@ class Database:
             SET status = 'resolved', resolved_outcome = ?, resolution_price = ?, settled_at = ?
             WHERE round_slug = ?
         """
-        settled_str = settled_at or datetime.now().isoformat()
+        settled_str = settled_at or datetime.now(timezone.utc).isoformat()
         params = (resolved_outcome, resolution_price, settled_str, round_slug)
         if conn is not None:
             conn.execute(sql, params)
@@ -1517,11 +1578,14 @@ class Database:
                 binance_spread_bps, binance_taker_flow_10s_imbalance,
                 binance_taker_flow_30s_imbalance, binance_taker_flow_60s_imbalance,
                 binance_return_10s_bps, binance_return_30s_bps, binance_return_60s_bps,
-                binance_return_since_open_bps, binance_basis_bps, is_valid,
-                skip_reason, raw_json
+                binance_return_since_open_bps, binance_open_mid, binance_open_timestamp_ms,
+                binance_open_source_timestamp_ms, binance_open_received_at_ms,
+                binance_open_timing_offset_ms, binance_basis_bps, is_valid,
+                skip_reason, experiment_spec_hash, raw_json
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?
             )
         """
         params = (
@@ -1559,9 +1623,15 @@ class Database:
             snapshot.binance_return_30s_bps,
             snapshot.binance_return_60s_bps,
             snapshot.binance_return_since_open_bps,
+            snapshot.binance_open_mid,
+            snapshot.binance_open_timestamp_ms,
+            snapshot.binance_open_source_timestamp_ms,
+            snapshot.binance_open_received_at_ms,
+            snapshot.binance_open_timing_offset_ms,
             snapshot.binance_basis_bps,
             1 if snapshot.is_valid else 0,
             snapshot.skip_reason,
+            snapshot.experiment_spec_hash or EXPERIMENT_SPEC_HASH,
             snapshot.to_json(),
         )
         if conn is not None:
@@ -1595,6 +1665,7 @@ class Database:
     def save_btc5m_forecast(
         self,
         forecast: BTC5mAblationForecast,
+        experiment_spec_hash: str = EXPERIMENT_SPEC_HASH,
         conn: sqlite3.Connection | None = None,
     ) -> None:
         """Persist a single ablation forecast."""
@@ -1607,8 +1678,8 @@ class Database:
                 from_cache, raw_response_hash, created_at_utc,
                 request_started_at_utc, response_received_at_utc,
                 response_received_at_ms, round_end_ms, snapshot_hash,
-                request_order, is_valid, rejection_reason
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                request_order, is_valid, rejection_reason, experiment_spec_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             forecast.forecast_id,
@@ -1638,6 +1709,7 @@ class Database:
             forecast.request_order,
             1 if forecast.is_valid else 0,
             forecast.rejection_reason,
+            experiment_spec_hash,
         )
         if conn is not None:
             conn.execute(sql, params)
@@ -1705,9 +1777,11 @@ class Database:
     def save_btc5m_resolution_score(
         self,
         score: dict[str, Any],
+        experiment_spec_hash: str | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
         """Persist comparative score record for a resolved round."""
+        spec_hash = experiment_spec_hash or score.get("experiment_spec_hash") or EXPERIMENT_SPEC_HASH
         sql = """
             INSERT OR REPLACE INTO btc5m_resolution_scores (
                 score_id, round_slug, target_horizon_sec, snapshot_id,
@@ -1718,9 +1792,9 @@ class Database:
                 cond_b_prob, cond_b_brier, cond_b_log_loss,
                 cond_c_prob, cond_c_brier, cond_c_log_loss,
                 cond_d_prob, cond_d_brier, cond_d_log_loss,
-                metadata_json
+                experiment_spec_hash, metadata_json
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         """
         params = (
@@ -1750,6 +1824,7 @@ class Database:
             score.get("cond_d_prob"),
             score.get("cond_d_brier"),
             score.get("cond_d_log_loss"),
+            spec_hash,
             json.dumps(score.get("metadata", {})),
         )
         if conn is not None:
@@ -1773,5 +1848,122 @@ class Database:
         with self._get_connection() as conn:
             rows = conn.execute(sql, params).fetchall()
             return [dict(r) for r in rows]
+
+    def save_collector_heartbeat(
+        self,
+        status: str,
+        current_round_slug: str | None,
+        valid_resolved_rounds: int,
+        total_snapshots: int,
+        total_forecasts: int,
+        total_openrouter_cost_usd: float,
+        rtds_status: str,
+        binance_ws_status: str,
+        experiment_spec_hash: str = EXPERIMENT_SPEC_HASH,
+        notes: str = "",
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Record collector heartbeat timestamp and status."""
+        heartbeat_id = f"hb_{int(time.time() * 1000)}"
+        now_utc = datetime.now(timezone.utc).isoformat()
+        now_epoch = int(time.time())
+        sql = """
+            INSERT INTO btc5m_collector_heartbeat (
+                heartbeat_id, timestamp_utc, timestamp_epoch, status,
+                current_round_slug, valid_resolved_rounds, total_snapshots,
+                total_forecasts, total_openrouter_cost_usd, rtds_status,
+                binance_ws_status, experiment_spec_hash, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            heartbeat_id, now_utc, now_epoch, status,
+            current_round_slug, valid_resolved_rounds, total_snapshots,
+            total_forecasts, total_openrouter_cost_usd, rtds_status,
+            binance_ws_status, experiment_spec_hash, notes
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_latest_collector_heartbeat(self) -> dict[str, Any] | None:
+        """Retrieve most recent collector heartbeat."""
+        sql = "SELECT * FROM btc5m_collector_heartbeat ORDER BY timestamp_epoch DESC LIMIT 1"
+        with self._get_connection() as conn:
+            row = conn.execute(sql).fetchone()
+            return dict(row) if row else None
+
+    def save_checkpoint(
+        self,
+        milestone_rounds: int,
+        valid_resolved_rounds: int,
+        total_snapshots: int,
+        total_forecasts: int,
+        total_openrouter_cost_usd: float,
+        brier_scores: dict[str, Any],
+        experiment_spec_hash: str = EXPERIMENT_SPEC_HASH,
+        backup_file_path: str | None = None,
+        notes: str = "",
+        conn: sqlite3.Connection | None = None,
+    ) -> str:
+        """Persist a scientific milestone checkpoint (e.g. at 30, 100, 500 rounds)."""
+        checkpoint_id = f"checkpoint_{milestone_rounds}r_{int(time.time())}"
+        now_utc = datetime.now(timezone.utc).isoformat()
+        sql = """
+            INSERT INTO btc5m_checkpoints (
+                checkpoint_id, milestone_rounds, created_at_utc, valid_resolved_rounds,
+                total_snapshots, total_forecasts, total_openrouter_cost_usd,
+                brier_scores_json, experiment_spec_hash, backup_file_path, notes
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            checkpoint_id, milestone_rounds, now_utc, valid_resolved_rounds,
+            total_snapshots, total_forecasts, total_openrouter_cost_usd,
+            json.dumps(brier_scores), experiment_spec_hash, backup_file_path, notes
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+        return checkpoint_id
+
+    def get_checkpoints(self) -> list[dict[str, Any]]:
+        """Retrieve all milestone checkpoints."""
+        sql = "SELECT * FROM btc5m_checkpoints ORDER BY milestone_rounds ASC"
+        with self._get_connection() as conn:
+            rows = conn.execute(sql).fetchall()
+            return [dict(r) for r in rows]
+
+    def count_valid_resolved_rounds(self) -> int:
+        """Count distinct successfully resolved rounds with valid scores."""
+        sql = """
+            SELECT count(DISTINCT round_slug)
+            FROM btc5m_resolution_scores
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(sql).fetchone()
+            return int(row[0]) if row else 0
+
+    def get_total_openrouter_cost(self) -> float:
+        """Calculate total OpenRouter API spend from jev_forecasts and btc5m_forecasts."""
+        cost = 0.0
+        with self._get_connection() as conn:
+            try:
+                row = conn.execute("SELECT sum(cost) FROM jev_forecasts WHERE cost IS NOT NULL").fetchone()
+                if row and row[0]:
+                    cost += float(row[0])
+            except Exception:
+                pass
+            try:
+                row = conn.execute("SELECT sum(input_tokens), sum(output_tokens) FROM btc5m_forecasts").fetchone()
+                if row and row[0] is not None and row[1] is not None:
+                    in_tokens = float(row[0])
+                    out_tokens = float(row[1])
+                    cost += (in_tokens * 0.15 / 1_000_000.0) + (out_tokens * 0.60 / 1_000_000.0)
+            except Exception:
+                pass
+        return round(cost, 4)
 
 

@@ -15,9 +15,11 @@ Strictly unauthenticated read-only access:
 
 from __future__ import annotations
 
+import asyncio
 import collections
 import json
 import logging
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -26,7 +28,11 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 BINANCE_FAPI_BASE: str = "https://fapi.binance.com"
+BINANCE_WS_STREAM_URL: str = (
+    "wss://fstream.binance.com/stream?streams=btcusdt@depth20@100ms/btcusdt@aggTrade"
+)
 ALLOWED_BINANCE_HOSTS: frozenset[str] = frozenset({"fapi.binance.com", "fstream.binance.com"})
+BINANCE_OPEN_TIMING_TOLERANCE_MS: int = 2500
 
 
 @dataclass(frozen=True)
@@ -52,7 +58,6 @@ class BinancePerpFeatures:
     return_30s_bps: float | None
     return_60s_bps: float | None
 
-    # Requirement A8: Return since open derived ONLY from Binance observed open price
     return_since_round_open_bps: float | None
     binance_open_mid: float | None
     binance_open_timestamp_ms: int | None
@@ -67,6 +72,9 @@ class BinancePerpFeatures:
     source_age_ms: int | None
 
     is_valid: bool
+    binance_open_source_timestamp_ms: int | None = None
+    binance_open_received_at_ms: int | None = None
+    binance_open_timing_offset_ms: int | None = None
     rejection_reason: str | None = None
 
     @property
@@ -91,17 +99,80 @@ class BinancePerpFeed:
         self._trades: collections.deque[tuple[int, float, float, bool]] = collections.deque(
             maxlen=max_trade_history
         )
-        # Observed Binance midpoints at round boundaries: round_slug -> (mid, timestamp_ms)
-        self._recorded_round_opens: dict[str, tuple[float, int]] = {}
+        # Observed Binance midpoints at round boundaries: round_slug -> (mid, recv_ts, source_ts, offset_ms)
+        self._recorded_round_opens: dict[str, tuple[float, int, int | None, int | None]] = {}
+        # Circular buffer of observed midpoints: (source_ts, recv_ts, mid_price)
+        self._midpoint_history: collections.deque[tuple[int | None, int, float]] = collections.deque(
+            maxlen=50000
+        )
+        self._running: bool = False
+        self.status: str = "Initialized (disconnected)"
+        self._listener_thread: threading.Thread | None = None
 
-    def record_round_open(self, round_slug: str, mid_price: float, timestamp_ms: int) -> None:
+    def record_midpoint(self, source_ts: int | None, recv_ts: int, mid_price: float) -> None:
+        """Record an observed midpoint in the circular history buffer."""
+        if mid_price > 0:
+            self._midpoint_history.append((source_ts, recv_ts, mid_price))
+
+    def find_boundary_open_mid(
+        self,
+        round_start_ms: int,
+        tolerance_ms: int = BINANCE_OPEN_TIMING_TOLERANCE_MS,
+    ) -> tuple[float, int | None, int, int] | None:
+        """Find the closest observed Binance perpetual midpoint to the round opening boundary.
+
+        Returns (mid_price, source_timestamp_ms, received_at_ms, timing_offset_ms)
+        if an observation exists within +/- tolerance_ms of round_start_ms.
+        Returns None if no observation falls within the tolerance window.
+        """
+        if not self._midpoint_history:
+            return None
+
+        best_obs: tuple[int | None, int, float] | None = None
+        best_diff: float = float("inf")
+        best_offset: int = 0
+
+        for source_ts, recv_ts, mid in self._midpoint_history:
+            eval_ts = source_ts if source_ts is not None else recv_ts
+            diff = abs(eval_ts - round_start_ms)
+            if diff < best_diff:
+                best_diff = diff
+                best_obs = (source_ts, recv_ts, mid)
+                best_offset = eval_ts - round_start_ms
+
+        if best_obs is not None and best_diff <= tolerance_ms:
+            source_ts, recv_ts, mid = best_obs
+            return (mid, source_ts, recv_ts, best_offset)
+
+        return None
+
+    def record_round_open(
+        self,
+        round_slug: str,
+        mid_price: float,
+        timestamp_ms: int,
+        source_timestamp_ms: int | None = None,
+        offset_ms: int | None = None,
+    ) -> None:
         """Record the observed Binance perpetual midpoint at the round opening boundary."""
         if mid_price > 0:
-            self._recorded_round_opens[round_slug] = (mid_price, timestamp_ms)
+            self._recorded_round_opens[round_slug] = (
+                mid_price,
+                timestamp_ms,
+                source_timestamp_ms,
+                offset_ms,
+            )
 
-    def get_round_open(self, round_slug: str) -> tuple[float, int] | None:
-        """Retrieve recorded Binance opening mid for a round."""
-        return self._recorded_round_opens.get(round_slug)
+    def get_round_open(
+        self, round_slug: str
+    ) -> tuple[float, int, int | None, int | None] | None:
+        """Retrieve recorded Binance opening mid and provenance for a round."""
+        rec = self._recorded_round_opens.get(round_slug)
+        if rec is None:
+            return None
+        if len(rec) == 2:
+            return (rec[0], rec[1], None, None)
+        return rec
 
     def add_depth(
         self,
@@ -114,7 +185,16 @@ class BinancePerpFeed:
         self._bids = sorted(bids, key=lambda x: x[0], reverse=True)
         self._asks = sorted(asks, key=lambda x: x[0])
         self._depth_source_timestamp_ms = source_timestamp_ms
-        self._depth_received_at_ms = received_at_ms or int(time.time() * 1000)
+        recv_ms = received_at_ms or int(time.time() * 1000)
+        self._depth_received_at_ms = recv_ms
+
+        # Record midpoint in circular buffer if valid order book
+        if self._bids and self._asks:
+            bb = self._bids[0][0]
+            ba = self._asks[0][0]
+            if bb < ba:
+                mid = (bb + ba) / 2.0
+                self.record_midpoint(source_timestamp_ms, recv_ms, mid)
 
     def add_trade(
         self,
@@ -133,6 +213,74 @@ class BinancePerpFeed:
         """Batch inject trades."""
         for t in trades:
             self.add_trade(t[0], t[1], t[2], t[3])
+
+    def start_background_listener(self) -> None:
+        """Start non-blocking daemon thread to maintain live Binance perp WebSocket connection."""
+        if getattr(self, "_running", False):
+            return
+
+        self._running = True
+        self.status = "Connecting..."
+
+        def _worker() -> None:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+            async def _run() -> None:
+                while self._running:
+                    try:
+                        import websockets
+
+                        async with websockets.connect(
+                            BINANCE_WS_STREAM_URL,
+                            ping_interval=20,
+                            ping_timeout=10,
+                            close_timeout=5,
+                        ) as ws:
+                            self.status = "Connected"
+                            while self._running:
+                                msg = await ws.recv()
+                                now_ms = int(time.time() * 1000)
+                                try:
+                                    parsed = json.loads(msg)
+                                    stream = parsed.get("stream", "")
+                                    payload = parsed.get("data", {})
+                                    if "depth" in stream:
+                                        bids = [(float(p), float(q)) for p, q in payload.get("b", [])]
+                                        asks = [(float(p), float(q)) for p, q in payload.get("a", [])]
+                                        source_ts = payload.get("T") or payload.get("E")
+                                        s_ts = int(source_ts) if source_ts is not None else None
+                                        self.add_depth(bids, asks, s_ts, now_ms)
+                                    elif "aggTrade" in stream:
+                                        t_ms = int(payload["T"])
+                                        p_val = float(payload["p"])
+                                        q_val = float(payload["q"])
+                                        m_val = bool(payload["m"])
+                                        self.add_trade(t_ms, p_val, q_val, m_val)
+                                except Exception:
+                                    continue
+                    except Exception as e:
+                        self.status = f"Disconnected ({e})"
+                        await asyncio.sleep(2.0)
+
+            try:
+                loop.run_until_complete(_run())
+            except Exception:
+                pass
+            finally:
+                loop.close()
+
+        self._listener_thread = threading.Thread(target=_worker, daemon=True, name="binance_perp_ws")
+        self._listener_thread.start()
+
+    def stop_background_listener(self) -> None:
+        """Stop background WebSocket listener."""
+        self._running = False
+        self.status = "Stopped"
+
+    def is_connected(self) -> bool:
+        """Check if WebSocket stream is currently connected."""
+        return getattr(self, "status", "") == "Connected"
 
     def fetch_rest_snapshot(
         self,
@@ -190,17 +338,57 @@ class BinancePerpFeed:
                 continue
 
         # Lookup recorded open price if round_slug provided
+        open_source_ts: int | None = None
+        open_recv_ts: int | None = None
+        open_offset_ms: int | None = None
         if round_slug and binance_open_price is None:
             rec = self.get_round_open(round_slug)
             if rec:
-                binance_open_price, binance_open_timestamp_ms = rec
+                binance_open_price = rec[0]
+                binance_open_timestamp_ms = rec[1]
+                open_recv_ts = rec[1]
+                open_source_ts = rec[2]
+                open_offset_ms = rec[3]
 
         return self.compute_features(
             now_ms=recv_ms,
             ref_price=ref_price,
             binance_open_price=binance_open_price,
             binance_open_timestamp_ms=binance_open_timestamp_ms,
+            binance_open_source_timestamp_ms=open_source_ts,
+            binance_open_received_at_ms=open_recv_ts,
+            binance_open_timing_offset_ms=open_offset_ms,
         )
+
+    def get_live_features(
+        self,
+        ref_price: float | None = None,
+        round_slug: str | None = None,
+        now_ms: int | None = None,
+    ) -> BinancePerpFeatures:
+        """Extract features from memory if streaming, fallback to REST snapshot if empty or stale."""
+        current_time = now_ms or int(time.time() * 1000)
+        # If we have bids/asks and data is fresh (< 5s old), compute from live memory
+        if self._bids and self._asks and (current_time - self._depth_received_at_ms < 5000):
+            open_mid: float | None = None
+            open_ts: int | None = None
+            open_source_ts: int | None = None
+            open_offset_ms: int | None = None
+            if round_slug:
+                rec = self.get_round_open(round_slug)
+                if rec:
+                    open_mid, open_ts, open_source_ts, open_offset_ms = rec
+            return self.compute_features(
+                now_ms=current_time,
+                ref_price=ref_price,
+                binance_open_price=open_mid,
+                binance_open_timestamp_ms=open_ts,
+                binance_open_source_timestamp_ms=open_source_ts,
+                binance_open_received_at_ms=open_ts,
+                binance_open_timing_offset_ms=open_offset_ms,
+            )
+        # Fallback to REST snapshot
+        return self.fetch_rest_snapshot(ref_price=ref_price, round_slug=round_slug)
 
     def compute_features(
         self,
@@ -209,6 +397,9 @@ class BinancePerpFeed:
         binance_open_price: float | None = None,
         binance_open_timestamp_ms: int | None = None,
         round_start_price: float | None = None,  # Deprecated parameter; mapped to binance_open_price
+        binance_open_source_timestamp_ms: int | None = None,
+        binance_open_received_at_ms: int | None = None,
+        binance_open_timing_offset_ms: int | None = None,
     ) -> BinancePerpFeatures:
         """Extract all microstructure features from current state.
 
@@ -248,6 +439,9 @@ class BinancePerpFeed:
                 return_since_round_open_bps=None,
                 binance_open_mid=binance_open_price,
                 binance_open_timestamp_ms=binance_open_timestamp_ms,
+                binance_open_source_timestamp_ms=binance_open_source_timestamp_ms,
+                binance_open_received_at_ms=binance_open_received_at_ms,
+                binance_open_timing_offset_ms=binance_open_timing_offset_ms,
                 basis_vs_ref_bps=None,
                 source_event_timestamp_ms=source_ts,
                 received_at_ms=recv_ts,
@@ -286,6 +480,9 @@ class BinancePerpFeed:
                 return_since_round_open_bps=None,
                 binance_open_mid=binance_open_price,
                 binance_open_timestamp_ms=binance_open_timestamp_ms,
+                binance_open_source_timestamp_ms=binance_open_source_timestamp_ms,
+                binance_open_received_at_ms=binance_open_received_at_ms,
+                binance_open_timing_offset_ms=binance_open_timing_offset_ms,
                 basis_vs_ref_bps=None,
                 source_event_timestamp_ms=source_ts,
                 received_at_ms=recv_ts,
@@ -323,12 +520,14 @@ class BinancePerpFeed:
         if ref_price is not None and ref_price > 0:
             basis_vs_ref_bps = round(((mid_price - ref_price) / ref_price) * 10_000.0, 3)
 
-        # Requirement A8: Return since round open uses ONLY observed Binance open price
+        # Requirement: Return since round open uses ONLY observed Binance open price.
+        # If open price missing or not positive, or if timing offset exceeds tolerance, return None.
         return_since_round_open_bps: float | None = None
         if binance_open_price is not None and binance_open_price > 0:
-            return_since_round_open_bps = round(
-                ((mid_price - binance_open_price) / binance_open_price) * 10_000.0, 3
-            )
+            if binance_open_timing_offset_ms is None or abs(binance_open_timing_offset_ms) <= BINANCE_OPEN_TIMING_TOLERANCE_MS:
+                return_since_round_open_bps = round(
+                    ((mid_price - binance_open_price) / binance_open_price) * 10_000.0, 3
+                )
 
         # Taker flow and price returns over rolling windows: 10s, 30s, 60s
         taker_10s = self._compute_taker_flow_window(now_ms, window_sec=10)
@@ -361,6 +560,9 @@ class BinancePerpFeed:
             return_since_round_open_bps=return_since_round_open_bps,
             binance_open_mid=binance_open_price,
             binance_open_timestamp_ms=binance_open_timestamp_ms,
+            binance_open_source_timestamp_ms=binance_open_source_timestamp_ms,
+            binance_open_received_at_ms=binance_open_received_at_ms,
+            binance_open_timing_offset_ms=binance_open_timing_offset_ms,
             basis_vs_ref_bps=basis_vs_ref_bps,
             source_event_timestamp_ms=source_ts,
             received_at_ms=recv_ts,

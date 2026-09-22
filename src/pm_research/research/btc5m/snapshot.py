@@ -121,6 +121,10 @@ class BTC5mFeatureSnapshot:
     # Quality control
     is_valid: bool
     skip_reason: str | None = None
+    experiment_spec_hash: str | None = None
+    binance_open_source_timestamp_ms: int | None = None
+    binance_open_received_at_ms: int | None = None
+    binance_open_timing_offset_ms: int | None = None
 
     # Backward compatibility properties
     @property
@@ -208,6 +212,10 @@ class BTC5mFeatureSnapshot:
         data_clean.setdefault("binance_source_age_ms", None)
         data_clean.setdefault("binance_open_mid", None)
         data_clean.setdefault("binance_open_timestamp_ms", None)
+        data_clean.setdefault("binance_open_source_timestamp_ms", None)
+        data_clean.setdefault("binance_open_received_at_ms", None)
+        data_clean.setdefault("binance_open_timing_offset_ms", None)
+        data_clean.setdefault("experiment_spec_hash", None)
 
         # Remove keys that aren't in dataclass
         valid_fields = set(cls.__dataclass_fields__.keys())
@@ -226,6 +234,7 @@ def build_feature_snapshot(
     poly_state: PolymarketMarketState,
     binance_features: BinancePerpFeatures | None,
     captured_at_ms: int | None = None,  # For backward compatibility
+    experiment_spec_hash: str | None = None,
 ) -> BTC5mFeatureSnapshot:
     """Combine individual subsystem feeds into a validated, frozen BTC5mFeatureSnapshot.
 
@@ -326,6 +335,9 @@ def build_feature_snapshot(
         binance_return_since_open_bps=binance_features.return_since_round_open_bps if binance_features else None,
         binance_open_mid=binance_features.binance_open_mid if binance_features else None,
         binance_open_timestamp_ms=binance_features.binance_open_timestamp_ms if binance_features else None,
+        binance_open_source_timestamp_ms=binance_features.binance_open_source_timestamp_ms if binance_features else None,
+        binance_open_received_at_ms=binance_features.binance_open_received_at_ms if binance_features else None,
+        binance_open_timing_offset_ms=binance_features.binance_open_timing_offset_ms if binance_features else None,
         binance_basis_bps=binance_features.basis_vs_ref_bps if binance_features else None,
         binance_source_timestamp_ms=binance_features.source_event_timestamp_ms if binance_features else None,
         binance_received_at_ms=binance_features.received_at_ms if binance_features else None,
@@ -334,4 +346,5 @@ def build_feature_snapshot(
         binance_valid=binance_features.is_valid if binance_features else False,
         is_valid=is_valid,
         skip_reason=skip_reason,
+        experiment_spec_hash=experiment_spec_hash,
     )

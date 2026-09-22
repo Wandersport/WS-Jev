@@ -34,6 +34,10 @@ data/jev_cache/
 data/prospective_raw/
 data/datasets/polymarket_*/
 data/normalized/
+data/backups/
+data/checkpoints/
+data/*.json
+data/*.stop
 tmp/
 scratch/
 

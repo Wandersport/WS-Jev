@@ -39,6 +39,7 @@ from pm_research.research.btc5m.contract import (
     BTC5mOfficialResolution,
     BTC5mRoundInfo,
 )
+from pm_research.research.btc5m.experiment import EXPERIMENT_SPEC_HASH
 from pm_research.research.btc5m.poly_book import PolymarketBookCollector
 from pm_research.research.btc5m.reference_feed import ChainlinkReferenceFeed
 from pm_research.research.btc5m.snapshot import (
@@ -175,12 +176,12 @@ class BTC5mShadowLab:
         # Extract Binance Perpetual microstructure (Requirement A8: use round_slug for observed open)
         binance_features: Any = None
         try:
-            binance_features = self.binance_feed.fetch_rest_snapshot(
+            binance_features = self.binance_feed.get_live_features(
                 ref_price=ref_features.current_price,
                 round_slug=round_info.round_slug,
             )
         except Exception as e:
-            logger.warning(f"Binance snapshot fetch error: {e}")
+            logger.warning(f"Binance feature fetch error: {e}")
 
         t_complete_ms = int(time.time() * 1000)
 
@@ -195,6 +196,7 @@ class BTC5mShadowLab:
             ref_features=ref_features,
             poly_state=poly_state,
             binance_features=binance_features,
+            experiment_spec_hash=EXPERIMENT_SPEC_HASH,
         )
 
         # Persist snapshot
@@ -424,6 +426,7 @@ class BTC5mShadowLab:
                 "cond_d_prob": fc_d.jev_up_prob if fc_d else None,
                 "cond_d_brier": compute_brier(fc_d.jev_up_prob, outcome_up) if fc_d else None,
                 "cond_d_log_loss": compute_log_loss(fc_d.jev_up_prob, outcome_up) if fc_d else None,
+                "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
                 "metadata": {
                     "price_to_beat": snap.price_to_beat,
                     "seconds_remaining": snap.seconds_remaining,
