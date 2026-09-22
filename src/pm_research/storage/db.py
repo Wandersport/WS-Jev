@@ -155,6 +155,24 @@ class Database:
 
     def _init_tables(self) -> None:
         with self._get_connection() as conn:
+            # Phase 6.1 migration: drop empty outdated btc5m tables so they recreate with new columns
+            cursor = conn.cursor()
+            for tbl, check_col in [
+                ("btc5m_rounds", "up_outcome_index"),
+                ("btc5m_snapshots", "actual_freeze_timestamp_ms"),
+                ("btc5m_forecasts", "is_valid"),
+                ("btc5m_resolution_scores", "market_q_implied"),
+            ]:
+                try:
+                    cursor.execute(f"PRAGMA table_info({tbl})")
+                    cols = {r[1] for r in cursor.fetchall()}
+                    if cols and check_col not in cols:
+                        cursor.execute(f"SELECT count(*) FROM {tbl}")
+                        if cursor.fetchone()[0] == 0:
+                            cursor.execute(f"DROP TABLE IF EXISTS {tbl}")
+                except Exception:
+                    pass
+
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS cycles (
@@ -520,6 +538,9 @@ class Database:
                     market_q REAL,
                     market_brier REAL,
                     market_log_loss REAL,
+                    market_q_implied REAL,
+                    market_implied_brier REAL,
+                    market_implied_log_loss REAL,
                     cond_a_prob REAL,
                     cond_a_brier REAL,
                     cond_a_log_loss REAL,
@@ -1692,13 +1713,14 @@ class Database:
                 score_id, round_slug, target_horizon_sec, snapshot_id,
                 resolved_outcome, resolution_price, resolved_at, scored_at,
                 market_q, market_brier, market_log_loss,
+                market_q_implied, market_implied_brier, market_implied_log_loss,
                 cond_a_prob, cond_a_brier, cond_a_log_loss,
                 cond_b_prob, cond_b_brier, cond_b_log_loss,
                 cond_c_prob, cond_c_brier, cond_c_log_loss,
                 cond_d_prob, cond_d_brier, cond_d_log_loss,
                 metadata_json
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
         """
         params = (
@@ -1713,6 +1735,9 @@ class Database:
             score.get("market_q"),
             score.get("market_brier"),
             score.get("market_log_loss"),
+            score.get("market_q_implied"),
+            score.get("market_implied_brier"),
+            score.get("market_implied_log_loss"),
             score.get("cond_a_prob"),
             score.get("cond_a_brier"),
             score.get("cond_a_log_loss"),
