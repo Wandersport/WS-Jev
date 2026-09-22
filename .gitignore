@@ -29,6 +29,8 @@ logs/
 reports/*.html
 reports/generated/
 data/raw/
+data/historical_raw/
+data/datasets/polymarket_*/
 data/normalized/
 tmp/
 scratch/

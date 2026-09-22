@@ -155,7 +155,7 @@ def test_fetch_public_markets_500_server_error():
 
 
 def test_fetch_public_markets_normalization():
-    """Verify that valid public payload is correctly normalized to domain models with zero fabrication."""
+    """Verify that valid public payload is correctly normalized with zero fabricated quotes or timestamps."""
     adapter = PublicMarketDataAdapter(min_request_interval_seconds=0.0)
 
     mock_gamma_payload = [
@@ -189,9 +189,60 @@ def test_fetch_public_markets_normalization():
         m = markets[0]
         assert m["market_id"] == "pub_poly_123"
         assert m["question"] == "Will candidate X win the election?"
-        assert m["yes_bid"] == 0.50
-        assert m["yes_ask"] == 0.54
+        # ZERO FABRICATION: when bestBid/bestAsk are absent, they must be None
+        assert m["yes_bid"] is None
+        assert m["yes_ask"] is None
+        assert m["no_bid"] is None
+        assert m["no_ask"] is None
+        assert m["spread"] is None
         assert m["last_price"] == 0.52
         assert m["liquidity"] == 25000.50
         assert m["status"] == "ACTIVE"
         assert m["resolution_time"] == "2026-11-05T00:00:00+00:00"
+        assert m["created_at"] == "2026-01-01T00:00:00+00:00"
+        assert m["metadata"]["quote_source"] == "unavailable"
+        assert m["metadata"]["price_source"] == "observed_outcome_prices"
+        assert m["metadata"]["timestamp_source"] == "observed_createdAt"
+
+
+def test_public_adapter_no_fabricated_quotes_or_timestamps():
+    """Regression test: verify that missing quotes and missing createdAt remain None."""
+    adapter = PublicMarketDataAdapter(min_request_interval_seconds=0.0)
+
+    # 1. Payload with explicit observed bid/ask
+    with_quotes = [{
+        "id": "poly_quoted",
+        "question": "Quoted Market Question",
+        "category": "TECH",
+        "endDate": "2026-12-01T00:00:00Z",
+        "outcomePrices": ["0.45", "0.55"],
+        "bestBid": "0.44",
+        "bestAsk": "0.46",
+        "spread": "0.02",
+        "createdAt": "2026-01-10T12:00:00Z",
+    }]
+    norm_quoted = adapter._normalize_public_response(with_quotes)
+    assert len(norm_quoted) == 1
+    mq = norm_quoted[0]
+    assert mq["yes_bid"] == 0.44
+    assert mq["yes_ask"] == 0.46
+    assert mq["spread"] == 0.02
+    assert mq["metadata"]["quote_source"] == "observed_best_bid_ask"
+
+    # 2. Payload with missing createdAt: MUST NOT fall back to endDate/resolutionTime
+    without_created = [{
+        "id": "poly_no_created",
+        "question": "No Created Market",
+        "endDate": "2026-12-01T00:00:00Z",
+        "lastTradePrice": "0.75",
+    }]
+    norm_no_created = adapter._normalize_public_response(without_created)
+    assert len(norm_no_created) == 1
+    mnc = norm_no_created[0]
+    assert mnc["created_at"] is None
+    assert mnc["yes_bid"] is None
+    assert mnc["yes_ask"] is None
+    assert mnc["last_price"] == 0.75
+    assert mnc["metadata"]["timestamp_source"] == "unavailable"
+    assert mnc["metadata"]["quote_source"] == "unavailable"
+

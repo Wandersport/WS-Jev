@@ -2,32 +2,43 @@
 
 THIS SYSTEM IS STRUCTURALLY INCAPABLE OF LIVE TRADING.
 Available subcommands:
-  seed-demo      Seed deterministic synthetic scenario with resolutions & calibration
-  run-once       Execute a single research pipeline cycle
-  run-loop       Execute multiple research cycles
-  portfolio      Display current paper portfolio state
-  calibration    Display forecast calibration analytics
-  report         Generate CLI and HTML dashboard report
-  verify-safety  Run automated safety checks proving no live trading capability
+  seed-demo         Seed deterministic synthetic scenario with resolutions & calibration
+  run-once          Execute a single research pipeline cycle
+  run-loop          Execute multiple research cycles
+  replay            Execute historical replay simulation
+  replay-report     Inspect a recorded historical replay run
+  datasets          List registered historical replay datasets
+  history-probe     Probe public read-only market data endpoints
+  history-collect   Collect and normalize historical resolved market datasets
+  history-validate  Benchmark probability model against historical market baseline
+  portfolio         Display current paper portfolio state
+  calibration       Display forecast calibration analytics
+  report            Generate CLI and HTML dashboard report
+  verify-safety     Run automated safety checks proving no live trading capability
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+from pm_research.calibration.market_baseline import StandardizedHorizonEvaluator
 from pm_research.calibration.metrics import CalibrationEngine
 from pm_research.config import SystemConfig
+from pm_research.data.historical_collector import HistoricalCollector
 from pm_research.data.public_adapter import PublicMarketDataAdapter
 from pm_research.data.synthetic import get_deterministic_synthetic_markets
 from pm_research.domain.models import Side
 from pm_research.pipeline.runner import PipelineRunner
-from pm_research.replay.dataset import DatasetManager
+from pm_research.replay.dataset import DatasetManager, ReplayDataset
 from pm_research.replay.engine import ReplayEngine
 from pm_research.replay.models import ReplayConfig
 from pm_research.replay.report import ReplayReportGenerator
+from pm_research.reporting.history_report import HistoryReportGenerator
 from pm_research.reporting.report import ReportGenerator
 from pm_research.safety.verifier import SafetyVerifier
 from pm_research.storage.db import Database
@@ -329,6 +340,141 @@ def cmd_datasets(args: argparse.Namespace) -> int:
         print(f"    SHA256:         {m.checksum_sha256[:16]}...{m.checksum_sha256[-8:] if m.checksum_sha256 else ''}")
         print("  " + "-" * 76)
     print("=" * 80 + "\n")
+def cmd_history_probe(args: argparse.Namespace) -> int:
+    """Probe public unauthenticated Gamma and CLOB API endpoints and print diagnostics."""
+    print("\n" + "=" * 80)
+    print("  [!] PUBLIC READ-ONLY MARKET DATA PROBE")
+    print("=" * 80)
+    print("  Testing unauthenticated read-only GET requests to allowlisted hosts...")
+
+    collector = HistoricalCollector()
+    t0 = time.monotonic()
+    markets = collector.discover_resolved_markets(max_candidates=3)
+    elapsed_gamma = time.monotonic() - t0
+
+    print(f"\n  [1] Gamma API Probe: {collector.gamma_base}/markets?closed=true")
+    print(f"      Latency: {elapsed_gamma:.3f}s")
+    print(f"      Markets Returned: {len(markets)}")
+
+    if not markets:
+        print("      [!] Failed to retrieve sample markets from Gamma API.")
+        return 1
+
+    sample = markets[0]
+    print(f"      Sample Market ID: {sample.get('id')}")
+    print(f"      Question: {sample.get('question')}")
+    print(f"      Outcomes: {sample.get('outcomes')}")
+    print(f"      Outcome Prices: {sample.get('outcomePrices')}")
+    print(f"      Closed Time: {sample.get('closedTime') or sample.get('endDate')}")
+
+    tokens = sample.get("clobTokenIds")
+    if isinstance(tokens, str):
+        try:
+            tokens = json.loads(tokens)
+        except Exception:
+            tokens = []
+
+    if tokens and len(tokens) > 0:
+        token_id = str(tokens[0])
+        print(f"\n  [2] CLOB API Probe: {collector.clob_base}/prices-history")
+        print(f"      Testing Token ID: {token_id[:16]}...")
+        t0 = time.monotonic()
+        closed_str = sample.get("closedTime") or sample.get("endDate")
+        try:
+            end_ts = int(parse_iso_utc(str(closed_str)).timestamp())
+        except Exception:
+            end_ts = int(time.time())
+        pts = collector.fetch_token_prices_history(
+            token_id=token_id, end_ts=end_ts, days_back=7, fidelity=60
+        )
+        elapsed_clob = time.monotonic() - t0
+        print(f"      Latency: {elapsed_clob:.3f}s")
+        print(f"      Price Points Returned: {len(pts)}")
+        if pts:
+            print(f"      First Point: ts={pts[0].get('t')} price={pts[0].get('p')}")
+            print(f"      Last Point:  ts={pts[-1].get('t')} price={pts[-1].get('p')}")
+    else:
+        print("\n  [2] CLOB API Probe: Skipped (no token ID on sample market)")
+
+    print("\n" + "=" * 80)
+    print("  PROBE COMPLETE - READ-ONLY NETWORKING OPERATIONAL")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_history_collect(args: argparse.Namespace) -> int:
+    """Download, filter, and normalize historical prediction market data into a ReplayDataset."""
+    print("\n" + "=" * 80)
+    print("  [!] HISTORICAL RESOLVED MARKET COLLECTOR")
+    print("      Strictly public read-only unauthenticated endpoints")
+    print("=" * 80)
+
+    collector = HistoricalCollector()
+    target_dir = Path(args.out)
+
+    print(f"  Target Directory:  {target_dir}")
+    print(f"  Max Markets:       {args.max_markets}")
+    print(f"  Days History:      {args.days}")
+    print(f"  Start Date:        {args.start_date}")
+    print(f"  End Date:          {args.end_date}")
+    print(f"  Min Volume:        ${args.min_volume:,.0f}")
+    print("\n  Collecting markets (this may take a few moments)...")
+
+    dataset, report = collector.build_dataset(
+        dataset_id=args.dataset_id,
+        name=args.dataset_name,
+        target_dir=target_dir,
+        max_markets=args.max_markets,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        min_volume=args.min_volume,
+        days_back=args.days,
+    )
+
+    print("\n" + "-" * 80)
+    print("  COLLECTION & QUALITY REPORT")
+    print("-" * 80)
+    print(f"  Markets Discovered:        {report.markets_discovered}")
+    print(f"  Markets Included:          {report.markets_included}")
+    print(f"  Markets Excluded:          {report.markets_excluded}")
+    print("  Exclusion Breakdown:")
+    for reason, count in sorted(report.exclusion_reasons.items()):
+        print(f"    - {reason:<28}: {count}")
+    print(f"  Total Snapshots Packaged:  {len(dataset.snapshots)}")
+    print(f"  Total Resolutions:         {len(dataset.resolutions)}")
+    print(f"  Date Range:                {report.earliest_resolution} to {report.latest_resolution}")
+    print(f"  Dataset SHA256:            {dataset.manifest.checksum_sha256}")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_history_validate(args: argparse.Namespace) -> int:
+    """Benchmark the deterministic probability model against historical market baseline."""
+    manager = DatasetManager()
+    dataset = manager.get_dataset(args.dataset)
+    if dataset is None:
+        p = Path(args.dataset)
+        if p.exists() and (p / "manifest.json").exists():
+            dataset = ReplayDataset.load(p)
+        else:
+            print(f"Error: Dataset '{args.dataset}' not found.")
+            return 1
+
+    evaluator = StandardizedHorizonEvaluator(
+        bootstrap_samples=args.bootstrap_samples,
+    )
+    report = evaluator.evaluate_dataset(dataset)
+    rep_gen = HistoryReportGenerator(report)
+
+    # CLI report
+    cli_text = rep_gen.generate_cli_report()
+    print(cli_text)
+
+    # HTML report if requested
+    if args.html_out:
+        out_path = rep_gen.generate_html_report(args.html_out)
+        print(f"\n[+] Standalone HTML report generated: {out_path}\n")
+
     return 0
 
 
@@ -373,6 +519,30 @@ def main(argv: list[str] | None = None) -> int:
     # datasets
     subparsers.add_parser("datasets", help="List registered historical replay datasets")
 
+    # history-probe
+    subparsers.add_parser("history-probe", help="Probe public read-only market data endpoints")
+
+    # history-collect
+    p_hcollect = subparsers.add_parser(
+        "history-collect", help="Collect and normalize historical resolved market datasets"
+    )
+    p_hcollect.add_argument("--max-markets", type=int, default=50, help="Maximum markets to package")
+    p_hcollect.add_argument("--days", type=int, default=30, help="Days of price history prior to resolution")
+    p_hcollect.add_argument("--out", default="data/datasets/polymarket_resolved_v1", help="Output directory")
+    p_hcollect.add_argument("--dataset-id", default="polymarket_resolved_v1", help="Dataset identifier")
+    p_hcollect.add_argument("--dataset-name", default="Polymarket Resolved Markets 2024", help="Dataset name")
+    p_hcollect.add_argument("--start-date", default="2024-01-01T00:00:00Z", help="Start date ISO UTC")
+    p_hcollect.add_argument("--end-date", default="2024-12-31T23:59:59Z", help="End date ISO UTC")
+    p_hcollect.add_argument("--min-volume", type=float, default=20000.0, help="Minimum market volume filter")
+
+    # history-validate
+    p_hval = subparsers.add_parser(
+        "history-validate", help="Benchmark probability model against historical market baseline"
+    )
+    p_hval.add_argument("--dataset", required=True, help="Dataset ID or directory path")
+    p_hval.add_argument("--bootstrap-samples", type=int, default=1000, help="Clustered bootstrap iterations")
+    p_hval.add_argument("--html-out", default="reports/history_benchmark.html", help="Path for HTML report")
+
     # portfolio
     subparsers.add_parser("portfolio", help="Show current paper portfolio")
 
@@ -399,6 +569,9 @@ def main(argv: list[str] | None = None) -> int:
         "replay": cmd_replay,
         "replay-report": cmd_replay_report,
         "datasets": cmd_datasets,
+        "history-probe": cmd_history_probe,
+        "history-collect": cmd_history_collect,
+        "history-validate": cmd_history_validate,
         "portfolio": cmd_portfolio,
         "calibration": cmd_calibration,
         "report": cmd_report,

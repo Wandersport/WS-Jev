@@ -97,13 +97,13 @@ class RigoIngestor:
 
             # Compute midpoint and spread
             midpoint = None
-            spread = None
+            spread = float(raw["spread"]) if raw.get("spread") is not None else None
             if yes_bid is not None and yes_ask is not None:
                 midpoint = (yes_bid + yes_ask) / 2.0
-                spread = max(0.0, yes_ask - yes_bid)
+                if spread is None:
+                    spread = max(0.0, yes_ask - yes_bid)
             elif last_price is not None:
                 midpoint = last_price
-                spread = 0.05
 
             liquidity = float(raw.get("liquidity", 0.0))
             volume_24h = float(raw.get("volume_24h", 0.0))
@@ -207,3 +207,13 @@ class RigoIngestor:
             snapshots.append(snapshot)
 
         return snapshots
+
+    def ingest_snapshot(
+        self,
+        raw_market: dict[str, Any],
+        cycle_id: str,
+        current_time: datetime | None = None,
+    ) -> MarketSnapshot | None:
+        """Normalize a single raw market into a MarketSnapshot object."""
+        res = self.ingest_snapshots([raw_market], cycle_id=cycle_id, current_time=current_time)
+        return res[0] if res else None

@@ -184,24 +184,67 @@ class PublicMarketDataAdapter:
                 except Exception:
                     continue
 
-                # Construct conservative quote without fabricating depth
-                half_spread = 0.02
-                yes_bid = max(0.01, round(yes_price - half_spread, 3))
-                yes_ask = min(0.99, round(yes_price + half_spread, 3))
-                no_ask = round(1.0 - yes_bid, 3)
-                no_bid = round(1.0 - yes_ask, 3)
+                # Observed quotes: never fabricate bid/ask from last_price
+                yes_bid = None
+                if item.get("bestBid") is not None:
+                    try:
+                        b_val = float(item["bestBid"])
+                        if 0.0 <= b_val <= 1.0:
+                            yes_bid = b_val
+                    except (ValueError, TypeError):
+                        pass
+
+                yes_ask = None
+                if item.get("bestAsk") is not None:
+                    try:
+                        a_val = float(item["bestAsk"])
+                        if 0.0 <= a_val <= 1.0:
+                            yes_ask = a_val
+                    except (ValueError, TypeError):
+                        pass
+
+                no_bid = None
+                if item.get("bestNoBid") is not None:
+                    try:
+                        nb_val = float(item["bestNoBid"])
+                        if 0.0 <= nb_val <= 1.0:
+                            no_bid = nb_val
+                    except (ValueError, TypeError):
+                        pass
+
+                no_ask = None
+                if item.get("bestNoAsk") is not None:
+                    try:
+                        na_val = float(item["bestNoAsk"])
+                        if 0.0 <= na_val <= 1.0:
+                            no_ask = na_val
+                    except (ValueError, TypeError):
+                        pass
+
+                # Observed spread if explicitly provided or derived strictly from observed quotes
+                spread = None
+                if item.get("spread") is not None:
+                    try:
+                        sp_val = float(item["spread"])
+                        if sp_val >= 0.0:
+                            spread = sp_val
+                    except (ValueError, TypeError):
+                        pass
+                elif yes_bid is not None and yes_ask is not None:
+                    spread = max(0.0, yes_ask - yes_bid)
 
                 liquidity = float(item.get("liquidity") or 0.0)
                 volume_24h = float(item.get("volume24hr") or item.get("volume") or 0.0)
 
+                # Observed created_at: never fall back to resolution time
+                created_at_iso = None
                 created_at_str = item.get("createdAt")
                 if created_at_str:
                     try:
                         created_dt = parse_iso_utc(str(created_at_str))
+                        created_at_iso = created_dt.isoformat()
                     except Exception:
-                        created_dt = res_dt
-                else:
-                    created_dt = res_dt
+                        created_at_iso = None
 
                 normalized.append({
                     "market_id": f"pub_{market_id}",
@@ -214,10 +257,18 @@ class PublicMarketDataAdapter:
                     "no_bid": no_bid,
                     "no_ask": no_ask,
                     "last_price": yes_price,
+                    "spread": spread,
                     "liquidity": max(0.0, liquidity),
                     "volume_24h": max(0.0, volume_24h),
-                    "created_at": created_dt.isoformat(),
-                    "metadata": {"source": "public_api", "raw_item_id": market_id},
+                    "created_at": created_at_iso,
+                    "metadata": {
+                        "source": "public_api",
+                        "raw_item_id": market_id,
+                        "price_source": "observed_last_trade" if item.get("lastTradePrice") is not None else "observed_outcome_prices",
+                        "quote_source": "observed_best_bid_ask" if (yes_bid is not None or yes_ask is not None) else "unavailable",
+                        "orderbook_source": "unavailable",
+                        "timestamp_source": "observed_createdAt" if created_at_iso is not None else "unavailable",
+                    },
                 })
             except Exception as e:
                 logger.debug(f"Skipping malformed public market item: {e}")

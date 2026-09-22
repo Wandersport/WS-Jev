@@ -29,15 +29,15 @@ class HistoricalSnapshot:
     question: str
     category: str
     resolution_time: datetime
-    yes_bid: float | None
-    yes_ask: float | None
-    no_bid: float | None
-    no_ask: float | None
-    last_price: float | None
-    midpoint: float | None
-    spread: float | None
-    liquidity: float
-    volume_24h: float
+    yes_bid: float | None = None
+    yes_ask: float | None = None
+    no_bid: float | None = None
+    no_ask: float | None = None
+    last_price: float | None = None
+    midpoint: float | None = None
+    spread: float | None = None
+    liquidity: float = 0.0
+    volume_24h: float = 0.0
     order_book: OrderBook | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 

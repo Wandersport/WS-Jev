@@ -162,6 +162,16 @@ class ReplayDataset:
         self.directory = out_path
         return out_path
 
+    @property
+    def snapshots(self) -> list[HistoricalSnapshot]:
+        """Property accessor for all historical snapshots."""
+        return self.get_snapshots()
+
+    @property
+    def resolutions(self) -> list[HistoricalResolution]:
+        """Property accessor for all resolutions."""
+        return self.get_resolutions()
+
     def get_snapshots(self) -> list[HistoricalSnapshot]:
         """Return all historical snapshots sorted chronologically."""
         if self._snapshots is None and self.directory:
