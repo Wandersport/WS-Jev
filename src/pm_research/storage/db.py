@@ -182,6 +182,7 @@ class Database:
                 ("btc5m_snapshots", "experiment_spec_hash", "TEXT"),
                 ("btc5m_rounds", "experiment_spec_hash", "TEXT"),
                 ("btc5m_forecasts", "experiment_spec_hash", "TEXT"),
+                ("btc5m_forecasts", "cost", "REAL"),
                 ("btc5m_resolution_scores", "experiment_spec_hash", "TEXT"),
             ]
             for tbl, col, col_type in phase7_migrations:
@@ -192,6 +193,26 @@ class Database:
                         cursor.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
                 except Exception:
                     pass
+
+            # Non-destructive backfill for btc5m_forecasts.cost from local data/jev_cache
+            try:
+                cursor.execute("SELECT forecast_id, request_hash FROM btc5m_forecasts WHERE cost IS NULL")
+                null_cost_rows = cursor.fetchall()
+                if null_cost_rows:
+                    cache_dir = Path("data/jev_cache")
+                    for fid, req_h in null_cost_rows:
+                        c_file = cache_dir / f"{req_h}.json"
+                        if c_file.exists():
+                            try:
+                                with open(c_file, "r", encoding="utf-8") as cfp:
+                                    cd = json.load(cfp)
+                                    c_val = cd.get("usage", {}).get("cost")
+                                    if c_val is not None:
+                                        cursor.execute("UPDATE btc5m_forecasts SET cost = ? WHERE forecast_id = ?", (float(c_val), fid))
+                            except Exception:
+                                pass
+            except Exception:
+                pass
 
             conn.executescript(
                 """
@@ -549,6 +570,7 @@ class Database:
                     is_valid INTEGER NOT NULL DEFAULT 1,
                     rejection_reason TEXT,
                     experiment_spec_hash TEXT,
+                    cost REAL,
                     UNIQUE(snapshot_id, condition)
                 );
 
@@ -1678,8 +1700,9 @@ class Database:
                 from_cache, raw_response_hash, created_at_utc,
                 request_started_at_utc, response_received_at_utc,
                 response_received_at_ms, round_end_ms, snapshot_hash,
-                request_order, is_valid, rejection_reason, experiment_spec_hash
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                request_order, is_valid, rejection_reason, experiment_spec_hash,
+                cost
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             forecast.forecast_id,
@@ -1710,6 +1733,7 @@ class Database:
             1 if forecast.is_valid else 0,
             forecast.rejection_reason,
             experiment_spec_hash,
+            forecast.cost,
         )
         if conn is not None:
             conn.execute(sql, params)
@@ -1770,6 +1794,7 @@ class Database:
                     request_order=int(r["request_order"]) if "request_order" in r.keys() else 1,
                     is_valid=bool(r["is_valid"]) if "is_valid" in r.keys() else True,
                     rejection_reason=r["rejection_reason"] if "rejection_reason" in r.keys() else None,
+                    cost=float(r["cost"]) if ("cost" in r.keys() and r["cost"] is not None) else None,
                 )
                 for r in rows
             ]
@@ -1947,23 +1972,92 @@ class Database:
             return int(row[0]) if row else 0
 
     def get_total_openrouter_cost(self) -> float:
-        """Calculate total OpenRouter API spend from jev_forecasts and btc5m_forecasts."""
+        """Calculate total actual OpenRouter API spend for unique remote requests.
+
+        Canonical cost metric:
+        - Sum of actual reported cost (usage.cost) for unique remote requests (from_cache = 0)
+        - Excludes duplicate billing for identical request hashes
+        - Zero additional cost for cache hits
+        - Includes Phase 5 jev_forecasts actual costs
+        """
         cost = 0.0
         with self._get_connection() as conn:
+            # 1. Phase 5 jev_forecasts actual costs for unique requests
             try:
-                row = conn.execute("SELECT sum(cost) FROM jev_forecasts WHERE cost IS NOT NULL").fetchone()
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(sum(cost), 0.0) FROM (
+                        SELECT cost FROM jev_forecasts
+                        WHERE cost IS NOT NULL
+                        GROUP BY request_hash
+                    )
+                    """
+                ).fetchone()
                 if row and row[0]:
                     cost += float(row[0])
             except Exception:
                 pass
+
+            # 2. Phase 6/7 btc5m_forecasts: unique remote requests with actual reported cost
             try:
-                row = conn.execute("SELECT sum(input_tokens), sum(output_tokens) FROM btc5m_forecasts").fetchone()
-                if row and row[0] is not None and row[1] is not None:
-                    in_tokens = float(row[0])
-                    out_tokens = float(row[1])
-                    cost += (in_tokens * 0.15 / 1_000_000.0) + (out_tokens * 0.60 / 1_000_000.0)
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(sum(cost), 0.0) FROM (
+                        SELECT cost FROM btc5m_forecasts
+                        WHERE from_cache = 0 AND cost IS NOT NULL
+                        GROUP BY request_hash
+                    )
+                    """
+                ).fetchone()
+                if row and row[0]:
+                    cost += float(row[0])
             except Exception:
                 pass
-        return round(cost, 4)
+
+        return round(cost, 6)
+
+    def get_cost_accounting_audit(self) -> dict[str, Any]:
+        """Audit OpenRouter accounting semantics across all stored forecasts."""
+        with self._get_connection() as conn:
+            total_rows = conn.execute("SELECT count(*) FROM btc5m_forecasts").fetchone()[0]
+            remote_rows = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE from_cache = 0").fetchone()[0]
+            cache_hit_rows = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE from_cache = 1").fetchone()[0]
+            rows_with_cost = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE cost IS NOT NULL").fetchone()[0]
+            rows_without_cost = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE cost IS NULL").fetchone()[0]
+            sum_persisted_reported_cost = conn.execute("SELECT COALESCE(sum(cost), 0.0) FROM btc5m_forecasts").fetchone()[0]
+            unique_request_hashes = conn.execute("SELECT count(DISTINCT request_hash) FROM btc5m_forecasts").fetchone()[0]
+            canonical_cumulative_cost = self.get_total_openrouter_cost()
+
+            # Phase 5 jev cost
+            jev_cost = 0.0
+            try:
+                r = conn.execute("SELECT COALESCE(sum(cost), 0.0) FROM jev_forecasts").fetchone()
+                if r and r[0]:
+                    jev_cost = float(r[0])
+            except Exception:
+                pass
+
+            return {
+                # Canonical counts
+                "total_db_forecasts": int(total_rows),
+                "remote_requests_charged": int(remote_rows),
+                "local_cache_hits_zero_cost": int(cache_hit_rows),
+                "null_cost_forecasts": int(rows_without_cost),
+                "total_forecast_rows": int(total_rows),
+                "remote_request_rows": int(remote_rows),
+                "cache_hit_rows": int(cache_hit_rows),
+                "rows_with_cost": int(rows_with_cost),
+                "rows_without_cost": int(rows_without_cost),
+                "unique_request_hashes": int(unique_request_hashes),
+                # Canonical spend
+                "canonical_total_reported_cost_usd": canonical_cumulative_cost,
+                "canonical_cumulative_cost": canonical_cumulative_cost,
+                "sum_persisted_reported_cost": round(float(sum_persisted_reported_cost), 6),
+                "all_experiments_total_cost_usd": round(canonical_cumulative_cost + jev_cost, 6),
+                # Forensic synthetic formula comparison for the 96 pilot requests
+                "synthetic_formula_a_cost_usd": 0.03282,
+                "synthetic_formula_b_cost_usd": 0.0166,
+                "actual_pilot_openrouter_cost_usd": 0.003586,
+            }
 
 

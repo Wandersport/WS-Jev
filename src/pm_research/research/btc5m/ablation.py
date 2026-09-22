@@ -84,6 +84,7 @@ class BTC5mAblationForecast:
     request_order: int = 0
     is_valid: bool = True
     rejection_reason: str | None = None
+    cost: float | None = None  # Actual reported OpenRouter cost (usage.cost)
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -413,10 +414,11 @@ class BTC5mAblationRunner:
             is_valid = False
             rejection_reason = "INVALID_LATE_MODEL_RESPONSE"
 
-        # Token usage
+        # Token usage & reported cost
         usage = resp_json.get("usage", {})
         input_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens", 0))
         output_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens", 0))
+        reported_cost = float(usage["cost"]) if usage.get("cost") is not None else None
 
         forecast_id = f"{snapshot.snapshot_id}_{condition}"
 
@@ -448,6 +450,7 @@ class BTC5mAblationRunner:
             request_order=request_order,
             is_valid=is_valid,
             rejection_reason=rejection_reason,
+            cost=reported_cost,
         )
 
     def run_all_conditions(

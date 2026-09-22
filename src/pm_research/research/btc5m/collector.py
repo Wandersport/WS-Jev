@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import signal
 import time
 from datetime import datetime, timezone
@@ -36,6 +37,13 @@ from pm_research.research.btc5m.experiment import (
     EXPERIMENT_SPEC_HASH,
 )
 from pm_research.research.btc5m.lab import BTC5mShadowLab
+from pm_research.research.btc5m.process import (
+    DEFAULT_LOCK_FILE,
+    DEFAULT_PID_FILE,
+    CollectorLock,
+    remove_collector_pid,
+    write_collector_pid,
+)
 from pm_research.research.btc5m.snapshot import STANDARD_HORIZONS_SEC
 from pm_research.storage.db import Database
 
@@ -61,6 +69,8 @@ class BTC5mAutonomousCollector:
         milestones: Sequence[int] = DEFAULT_MILESTONES,
         status_file_path: Path | str = DEFAULT_STATUS_FILE,
         stop_file_path: Path | str = DEFAULT_STOP_FILE,
+        lock_file_path: Path | str = DEFAULT_LOCK_FILE,
+        pid_file_path: Path | str = DEFAULT_PID_FILE,
         checkpoints_dir: Path | str = DEFAULT_CHECKPOINTS_DIR,
         poll_interval_sec: float = 3.0,
     ) -> None:
@@ -71,6 +81,8 @@ class BTC5mAutonomousCollector:
         self.milestones = sorted(milestones)
         self.status_file_path = Path(status_file_path)
         self.stop_file_path = Path(stop_file_path)
+        self.lock_file_path = Path(lock_file_path)
+        self.pid_file_path = Path(pid_file_path)
         self.checkpoints_dir = Path(checkpoints_dir)
         self.poll_interval_sec = poll_interval_sec
 
@@ -79,10 +91,13 @@ class BTC5mAutonomousCollector:
         self.stop_requested: bool = False
         self.cost_guard_triggered: bool = False
         self._checked_milestones: set[int] = set()
+        self.lock: CollectorLock | None = None
 
         # Ensure directory structures exist
         self.checkpoints_dir.mkdir(parents=True, exist_ok=True)
         self.status_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_file_path.parent.mkdir(parents=True, exist_ok=True)
+        self.pid_file_path.parent.mkdir(parents=True, exist_ok=True)
 
     def request_stop(self) -> None:
         """Signal collector to shut down gracefully after current operation."""
@@ -284,159 +299,175 @@ class BTC5mAutonomousCollector:
         logger.info(f"Cost ceiling: ${self.cost_ceiling_usd:.2f}")
         logger.info(f"Frozen Spec Hash: {EXPERIMENT_SPEC_HASH}")
 
-        # Setup OS signal handlers for graceful shutdown
-        def _sig_handler(signum: int, _frame: Any) -> None:
-            logger.info(f"Received signal {signum}. Requesting graceful shutdown...")
-            self.request_stop()
+        # Enforce single-instance process lock
+        self.lock = CollectorLock(self.lock_file_path)
+        if not self.lock.acquire():
+            logger.error(
+                "Failed to acquire collector lock (another collector instance is already running). Exiting."
+            )
+            self.status = "LOCK_REJECTED"
+            return
+
+        write_collector_pid(os.getpid(), self.pid_file_path)
 
         try:
-            signal.signal(signal.SIGINT, _sig_handler)
-            signal.signal(signal.SIGTERM, _sig_handler)
-        except Exception:
-            pass  # May fail if not in main thread
+            # Setup OS signal handlers for graceful shutdown
+            def _sig_handler(signum: int, _frame: Any) -> None:
+                logger.info(f"Received signal {signum}. Requesting graceful shutdown...")
+                self.request_stop()
 
-        # Start background feeds
-        try:
-            self.lab.ref_feed.start_background_listener()
-            self.lab.binance_feed.start_background_listener()
-            logger.info("Started background streaming feeds (Chainlink RTDS & Binance Perp WS)")
-        except Exception as e:
-            logger.warning(f"Error starting background feeds: {e}")
-
-        # Reconcile on startup
-        self.status = "STARTUP_RECOVERY"
-        self.emit_heartbeat()
-        self.reconcile_startup_state()
-
-        completed_slugs: set[str] = {
-            r["round_slug"]
-            for r in self.db.get_btc5m_rounds()
-            if r.get("status") == "resolved"
-        }
-
-        self.status = "COLLECTING"
-
-        while not self.is_stop_requested():
-            valid_rounds = self.db.count_valid_resolved_rounds()
-            if valid_rounds >= self.target_valid_rounds:
-                logger.info(
-                    f"Reached target valid resolved rounds ({valid_rounds}/{self.target_valid_rounds})."
-                )
-                self.status = "TARGET_REACHED"
-                self.trigger_milestone_checkpoint(
-                    milestone=self.target_valid_rounds,
-                    valid_rounds=valid_rounds,
-                )
-                self.emit_heartbeat(status="TARGET_REACHED")
-                break
-
-            # Check cost ceiling guard
-            total_spend = self.db.get_total_openrouter_cost()
-            if total_spend >= self.cost_ceiling_usd:
-                if not self.cost_guard_triggered:
-                    logger.warning(
-                        f"Cost ceiling reached: spent ${total_spend:.4f} >= limit ${self.cost_ceiling_usd:.2f}. "
-                        "Triggering COST_GUARD_TRIGGERED mode (pausing LLM forecasts)."
-                    )
-                    self.cost_guard_triggered = True
-                self.emit_heartbeat(status="COST_GUARD_TRIGGERED")
-
-            # Discover active round
             try:
-                round_info = self.lab.contract_mgr.discover_active_round()
+                signal.signal(signal.SIGINT, _sig_handler)
+                signal.signal(signal.SIGTERM, _sig_handler)
+            except Exception:
+                pass  # May fail if not in main thread
+
+            # Start background feeds
+            try:
+                self.lab.ref_feed.start_background_listener()
+                self.lab.binance_feed.start_background_listener()
+                logger.info("Started background streaming feeds (Chainlink RTDS & Binance Perp WS)")
             except Exception as e:
-                logger.debug(f"Discovery poll failed: {e}")
-                self.emit_heartbeat(notes=f"Discovery poll: {e}")
-                time.sleep(self.poll_interval_sec)
-                continue
+                logger.warning(f"Error starting background feeds: {e}")
 
-            slug = round_info.round_slug
-            self.current_round_slug = slug
+            # Reconcile on startup
+            self.status = "STARTUP_RECOVERY"
+            self.emit_heartbeat()
+            self.reconcile_startup_state()
 
-            if slug in completed_slugs:
-                # Current round is already resolved; wait for the next 5m cycle
-                seconds_to_end = max(1.0, round_info.seconds_remaining)
-                logger.debug(
-                    f"Round {slug} already resolved. Waiting {min(15.0, seconds_to_end):.1f}s for next cycle..."
+            completed_slugs: set[str] = {
+                r["round_slug"]
+                for r in self.db.get_btc5m_rounds()
+                if r.get("status") == "resolved"
+            }
+
+            self.status = "COLLECTING"
+
+            while not self.is_stop_requested():
+                valid_rounds = self.db.count_valid_resolved_rounds()
+                if valid_rounds >= self.target_valid_rounds:
+                    logger.info(
+                        f"Reached target valid resolved rounds ({valid_rounds}/{self.target_valid_rounds})."
+                    )
+                    self.status = "TARGET_REACHED"
+                    self.trigger_milestone_checkpoint(
+                        milestone=self.target_valid_rounds,
+                        valid_rounds=valid_rounds,
+                    )
+                    self.emit_heartbeat(status="TARGET_REACHED")
+                    break
+
+                # Check cost ceiling guard
+                total_spend = self.db.get_total_openrouter_cost()
+                if total_spend >= self.cost_ceiling_usd:
+                    if not self.cost_guard_triggered:
+                        logger.warning(
+                            f"Cost ceiling reached: spent ${total_spend:.4f} >= limit ${self.cost_ceiling_usd:.2f}. "
+                            "Triggering COST_GUARD_TRIGGERED mode (pausing LLM forecasts)."
+                        )
+                        self.cost_guard_triggered = True
+                    self.emit_heartbeat(status="COST_GUARD_TRIGGERED")
+
+                # Discover active round
+                try:
+                    round_info = self.lab.contract_mgr.discover_active_round()
+                except Exception as e:
+                    logger.debug(f"Discovery poll failed: {e}")
+                    self.emit_heartbeat(notes=f"Discovery poll: {e}")
+                    time.sleep(self.poll_interval_sec)
+                    continue
+
+                slug = round_info.round_slug
+                self.current_round_slug = slug
+
+                if slug in completed_slugs:
+                    # Current round is already resolved; wait for the next 5m cycle
+                    seconds_to_end = max(1.0, round_info.seconds_remaining)
+                    logger.debug(
+                        f"Round {slug} already resolved. Waiting {min(15.0, seconds_to_end):.1f}s for next cycle..."
+                    )
+                    self.emit_heartbeat()
+                    time.sleep(min(10.0, seconds_to_end))
+                    continue
+
+                # Check if round has sufficient time remaining
+                if round_info.seconds_remaining < 35.0:
+                    logger.info(
+                        f"Discovered round {slug} with only {round_info.seconds_remaining:.1f}s remaining. "
+                        "Skipping forecasting to avoid partial capture."
+                    )
+                    self.emit_heartbeat(notes=f"Skipping round {slug} (late discovery)")
+                    time.sleep(max(2.0, round_info.seconds_remaining + 3.0))
+                    continue
+
+                # Persist discovered round
+                self.db.save_btc5m_round(round_info, status="active")
+                logger.info(
+                    f"=== Monitoring Round {slug} | Remaining: {round_info.seconds_remaining:.1f}s "
+                    f"| Target valid: {valid_rounds}/{self.target_valid_rounds} ==="
                 )
                 self.emit_heartbeat()
-                time.sleep(min(10.0, seconds_to_end))
-                continue
 
-            # Check if round has sufficient time remaining
-            if round_info.seconds_remaining < 35.0:
-                logger.info(
-                    f"Discovered round {slug} with only {round_info.seconds_remaining:.1f}s remaining. "
-                    "Skipping forecasting to avoid partial capture."
-                )
-                self.emit_heartbeat(notes=f"Skipping round {slug} (late discovery)")
-                time.sleep(max(2.0, round_info.seconds_remaining + 3.0))
-                continue
+                # Record Binance boundary open midpoint if within tolerance
+                self._ensure_round_open_provenance(round_info)
 
-            # Persist discovered round
-            self.db.save_btc5m_round(round_info, status="active")
-            logger.info(
-                f"=== Monitoring Round {slug} | Remaining: {round_info.seconds_remaining:.1f}s "
-                f"| Target valid: {valid_rounds}/{self.target_valid_rounds} ==="
-            )
-            self.emit_heartbeat()
+                # Monitor horizons
+                self._process_round_horizons(round_info)
 
-            # Record Binance boundary open midpoint if within tolerance
-            self._ensure_round_open_provenance(round_info)
+                if self.is_stop_requested():
+                    break
 
-            # Monitor horizons
-            self._process_round_horizons(round_info)
+                # Round close: wait for settlement and score
+                logger.info(f"Round {slug} completed horizons. Awaiting official settlement...")
+                self.status = "AWAITING_RESOLUTION"
+                self.emit_heartbeat()
 
-            if self.is_stop_requested():
-                break
-
-            # Round close: wait for settlement and score
-            logger.info(f"Round {slug} completed horizons. Awaiting official settlement...")
-            self.status = "AWAITING_RESOLUTION"
-            self.emit_heartbeat()
-
-            official_res = self.lab.poll_round_resolution(
-                round_info=round_info,
-                poll_interval_sec=4.0,
-                max_wait_sec=300,
-            )
-
-            if official_res and official_res.is_resolved:
-                completed_slugs.add(slug)
-                new_valid_count = self.db.count_valid_resolved_rounds()
-                logger.info(
-                    f"Round {slug} scored successfully. Total valid resolved rounds: {new_valid_count}"
+                official_res = self.lab.poll_round_resolution(
+                    round_info=round_info,
+                    poll_interval_sec=4.0,
+                    max_wait_sec=300,
                 )
 
-                # Check milestones
-                for m in self.milestones:
-                    if new_valid_count >= m and m not in self._checked_milestones:
-                        self.trigger_milestone_checkpoint(milestone=m, valid_rounds=new_valid_count)
+                if official_res and official_res.is_resolved:
+                    completed_slugs.add(slug)
+                    new_valid_count = self.db.count_valid_resolved_rounds()
+                    logger.info(
+                        f"Round {slug} scored successfully. Total valid resolved rounds: {new_valid_count}"
+                    )
 
-            self.current_round_slug = None
-            self.status = "COLLECTING"
-            self.emit_heartbeat()
-            time.sleep(self.poll_interval_sec)
+                    # Check milestones
+                    for m in self.milestones:
+                        if new_valid_count >= m and m not in self._checked_milestones:
+                            self.trigger_milestone_checkpoint(milestone=m, valid_rounds=new_valid_count)
 
-        # Clean shutdown handling
-        logger.info("Collector loop terminated. Cleaning up...")
-        try:
-            self.lab.ref_feed.stop_background_listener()
-            self.lab.binance_feed.stop_background_listener()
-        except Exception:
-            pass
+                self.current_round_slug = None
+                self.status = "COLLECTING"
+                self.emit_heartbeat()
+                time.sleep(self.poll_interval_sec)
 
-        final_status = "STOPPED" if not (self.status == "TARGET_REACHED") else "TARGET_REACHED"
-        self.emit_heartbeat(status=final_status, notes="Collector shut down cleanly")
-
-        if self.stop_file_path.exists():
+            # Clean shutdown handling
+            logger.info("Collector loop terminated. Cleaning up...")
             try:
-                self.stop_file_path.unlink()
-                logger.info(f"Removed stop file: {self.stop_file_path}")
+                self.lab.ref_feed.stop_background_listener()
+                self.lab.binance_feed.stop_background_listener()
             except Exception:
                 pass
 
-        logger.info(f"Collector shutdown complete. Final status: {final_status}")
+            final_status = "STOPPED" if not (self.status == "TARGET_REACHED") else "TARGET_REACHED"
+            self.emit_heartbeat(status=final_status, notes="Collector shut down cleanly")
+
+            if self.stop_file_path.exists():
+                try:
+                    self.stop_file_path.unlink()
+                    logger.info(f"Removed stop file: {self.stop_file_path}")
+                except Exception:
+                    pass
+
+            logger.info(f"Collector shutdown complete. Final status: {final_status}")
+        finally:
+            if self.lock is not None:
+                self.lock.release()
+            remove_collector_pid(self.pid_file_path)
 
     def _ensure_round_open_provenance(self, round_info: Any) -> None:
         """Attempt to find and record the exact boundary midpoint from Binance feed within tolerance."""

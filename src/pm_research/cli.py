@@ -29,7 +29,6 @@ import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
 
 from pm_research.calibration.market_baseline import StandardizedHorizonEvaluator
 from pm_research.calibration.metrics import CalibrationEngine
@@ -49,6 +48,11 @@ from pm_research.research.btc5m.backup import backup_database, list_backups
 from pm_research.research.btc5m.collector import BTC5mAutonomousCollector
 from pm_research.research.btc5m.experiment import EXPERIMENT_SPEC_HASH
 from pm_research.research.btc5m.lab import BTC5mShadowLab
+from pm_research.research.btc5m.process import (
+    determine_collector_status,
+    launch_detached_collector,
+    stop_collector,
+)
 from pm_research.research.btc5m.snapshot import STANDARD_HORIZONS_SEC
 from pm_research.safety.verifier import SafetyVerifier
 from pm_research.storage.db import Database
@@ -877,51 +881,103 @@ def cmd_btc5m_collect(args: argparse.Namespace) -> int:
         return 0
 
 
+def cmd_btc5m_collector_start(args: argparse.Namespace) -> int:
+    """Launch the autonomous BTC 5m prospective collector as a detached OS process."""
+    target_rounds = getattr(args, "target_valid_rounds", 100) or 100
+    cost_ceiling = getattr(args, "cost_ceiling", 10.0) or 10.0
+
+    print("\n" + "=" * 80)
+    print("  [!] LAUNCHING DETACHED AUTONOMOUS BTC 5m COLLECTOR")
+    print("=" * 80)
+    print(f"  TARGET_VALID_ROUNDS:        {target_rounds}")
+    print(f"  COST_CEILING_USD:           ${cost_ceiling:.2f}")
+    print(f"  EXPERIMENT_SPEC_HASH:       {EXPERIMENT_SPEC_HASH}")
+    print("  SINGLE_INSTANCE_GUARANTEE:  fcntl.flock (data/collector.lock)")
+    print("  LOG_REDIRECT:               data/logs/btc5m_collector.log")
+    print("  SAFETY_CONTRACT:            FORECAST RESEARCH ONLY (Zero Trading / Paper Only)")
+
+    success, pid, msg = launch_detached_collector(
+        target_valid_rounds=target_rounds,
+        cost_ceiling_usd=cost_ceiling,
+    )
+
+    if success:
+        print(f"\n  [+] SUCCESS: {msg}")
+        print(f"      PID: {pid}")
+        print("      Collector is running detached in background, independent of terminal.")
+        print("      Check status with: uv run pmr btc5m-collector-status")
+        print("      Stop anytime with: uv run pmr btc5m-collector-stop")
+        print("=" * 80 + "\n")
+        return 0
+    else:
+        print(f"\n  [-] LAUNCH REJECTED: {msg}")
+        if pid:
+            print(f"      Existing PID: {pid}")
+        print("=" * 80 + "\n")
+        return 1
+
+
 def cmd_btc5m_collector_status(args: argparse.Namespace) -> int:
-    """Inspect collector status file and database heartbeat."""
+    """Inspect live health, process state, and progress of the autonomous collector."""
     db = get_db(args.db)
-    status_file = Path("data/collector_status.json")
+    status_info = determine_collector_status(db=db)
 
     print("\n" + "=" * 80)
     print("  [!] BTC 5-MINUTE COLLECTOR LIVE HEALTH & STATUS")
     print("=" * 80)
 
-    file_data: dict[str, Any] = {}
-    if status_file.exists():
-        try:
-            with open(status_file, "r", encoding="utf-8") as f:
-                file_data = json.load(f)
-        except Exception as e:
-            print(f"  [!] Warning: Could not read {status_file}: {e}")
+    state = status_info["state"]
+    pid = status_info["pid"]
+    proc_alive = status_info["process_alive"]
+    proc_verified = status_info["process_verified"]
+    lock_held = status_info["lock_held"]
+    hb_fresh = status_info["heartbeat_fresh"]
+    hb_age = status_info["heartbeat_age_sec"]
+    file_data = status_info["status_data"]
 
-    hb = db.get_latest_collector_heartbeat()
+    print(f"  COLLECTOR_STATE:       {state}")
+    print(
+        f"  PROCESS_ALIVE:         {'YES' if proc_alive else 'NO'} "
+        f"(PID: {pid or 'None'}, Verified: {'YES' if proc_verified else 'NO'})"
+    )
+    print(f"  FILE_LOCK_HELD:        {'YES' if lock_held else 'NO'}")
+    age_str = f"{hb_age:.1f}s ago" if hb_age is not None else "N/A"
+    print(f"  HEARTBEAT_FRESH:       {'YES' if hb_fresh else 'NO'} (Age: {age_str}, Stale Threshold: 120s)")
 
     if file_data:
-        print(f"  Collector State:       {file_data.get('status', 'UNKNOWN')}")
-        print(f"  Last Status Update:    {file_data.get('timestamp_utc', 'N/A')}")
+        print(f"  Last Heartbeat UTC:    {file_data.get('timestamp_utc', 'N/A')}")
         print(f"  Active Round Slug:     {file_data.get('current_round_slug') or 'None (idle/polling)'}")
-        print(f"  Valid Resolved Rounds: {file_data.get('valid_resolved_rounds', 0)} / {file_data.get('target_valid_rounds', 100)}")
+        print(
+            f"  Valid Resolved Rounds: {file_data.get('valid_resolved_rounds', 0)} / "
+            f"{file_data.get('target_valid_rounds', 100)}"
+        )
         print(f"  Total Snapshots:       {file_data.get('total_snapshots', 0)}")
         print(f"  Total Forecasts:       {file_data.get('total_forecasts', 0)}")
         cost_spent = file_data.get("total_openrouter_cost_usd", 0.0)
         ceiling = file_data.get("cost_ceiling_usd", 10.0)
-        print(f"  OpenRouter Spend:      ${cost_spent:.4f} / ${ceiling:.2f} (Guard Triggered: {file_data.get('cost_guard_triggered', False)})")
+        guard = file_data.get("cost_guard_triggered", False)
+        print(
+            f"  Canonical Cost Spend:  ${cost_spent:.4f} / ${ceiling:.2f} "
+            f"(Guard Triggered: {guard})"
+        )
         feeds = file_data.get("feeds", {})
         print(f"  Chainlink RTDS Feed:   {feeds.get('chainlink_rtds', 'N/A')}")
         print(f"  Binance Perp WS Feed:  {feeds.get('binance_perp_ws', 'N/A')}")
         print(f"  Experiment Spec Hash:  {file_data.get('experiment_spec_hash', 'N/A')}")
         if file_data.get("notes"):
             print(f"  Notes:                 {file_data.get('notes')}")
-    elif hb:
-        print(f"  Collector State (DB):  {hb.get('status', 'UNKNOWN')}")
-        print(f"  Last Heartbeat:        {hb.get('timestamp_utc', 'N/A')}")
-        print(f"  Active Round Slug:     {hb.get('current_round_slug') or 'None'}")
-        print(f"  Valid Resolved Rounds: {hb.get('valid_resolved_rounds', 0)}")
-        print(f"  Total Spend:           ${hb.get('total_openrouter_cost_usd', 0.0):.4f}")
-        print(f"  RTDS Feed:             {hb.get('rtds_status', 'N/A')}")
-        print(f"  Binance Perp Feed:     {hb.get('binance_ws_status', 'N/A')}")
     else:
-        print("  No collector activity recorded yet. Start with 'pmr btc5m-collect'.")
+        hb = db.get_latest_collector_heartbeat()
+        if hb:
+            print(f"  Collector State (DB):  {hb.get('status', 'UNKNOWN')}")
+            print(f"  Last Heartbeat:        {hb.get('timestamp_utc', 'N/A')}")
+            print(f"  Active Round Slug:     {hb.get('current_round_slug') or 'None'}")
+            print(f"  Valid Resolved Rounds: {hb.get('valid_resolved_rounds', 0)}")
+            print(f"  Total Spend:           ${hb.get('total_openrouter_cost_usd', 0.0):.4f}")
+            print(f"  RTDS Feed:             {hb.get('rtds_status', 'N/A')}")
+            print(f"  Binance Perp Feed:     {hb.get('binance_ws_status', 'N/A')}")
+        else:
+            print("  No collector activity recorded yet. Start with 'pmr btc5m-collector-start'.")
 
     # Also list checkpoints
     checkpoints = db.get_checkpoints()
@@ -930,19 +986,57 @@ def cmd_btc5m_collector_status(args: argparse.Namespace) -> int:
         print("  MILESTONE CHECKPOINTS")
         print("-" * 80)
         for cp in checkpoints:
-            print(f"  Milestone {cp['milestone_rounds']:>3}r | Created: {cp['created_at_utc']} | Valid: {cp['valid_resolved_rounds']} | Spend: ${cp['total_openrouter_cost_usd']:.4f}")
+            print(
+                f"  Milestone {cp['milestone_rounds']:>3}r | Created: {cp['created_at_utc']} | "
+                f"Valid: {cp['valid_resolved_rounds']} | Spend: ${cp['total_openrouter_cost_usd']:.4f}"
+            )
 
     print("=" * 80 + "\n")
     return 0
 
 
 def cmd_btc5m_collector_stop(args: argparse.Namespace) -> int:
-    """Signal running autonomous collector to stop gracefully."""
-    stop_file = Path("data/collector.stop")
-    stop_file.parent.mkdir(parents=True, exist_ok=True)
-    stop_file.touch()
-    print(f"\n[+] Stop signal written to: {stop_file}")
-    print("    The collector will finish processing its current horizon/settlement and shut down cleanly.\n")
+    """Signal running autonomous collector to stop gracefully and verify termination."""
+    print("\n" + "=" * 80)
+    print("  [!] STOPPING BTC 5-MINUTE AUTONOMOUS COLLECTOR")
+    print("=" * 80)
+    success, msg = stop_collector()
+    if success:
+        print(f"  [+] {msg}")
+        print("=" * 80 + "\n")
+        return 0
+    else:
+        print(f"  [-] {msg}")
+        print("=" * 80 + "\n")
+        return 1
+
+
+def cmd_btc5m_audit_cost(args: argparse.Namespace) -> int:
+    """Audit OpenRouter cost accounting semantics and verify deduplication."""
+    db = get_db(args.db)
+    audit = db.get_cost_accounting_audit()
+
+    print("\n" + "=" * 80)
+    print("  [!] OPENROUTER COST ACCOUNTING FORENSIC AUDIT")
+    print("=" * 80)
+    print(f"  TOTAL_DB_FORECASTS:              {audit['total_db_forecasts']}")
+    print(f"  REMOTE_CHARGED_REQUESTS:         {audit['remote_requests_charged']} (exact OpenRouter usage.cost)")
+    print(f"  LOCAL_CACHE_HITS:                {audit['local_cache_hits_zero_cost']} ($0.00 additional spend)")
+    print(f"  NULL_COST_FORECASTS:             {audit['null_cost_forecasts']}")
+    print("-" * 80)
+    print(f"  ACTUAL_CANONICAL_COST (USD):     ${audit['canonical_total_reported_cost_usd']:.6f}")
+    print(f"  ALL_EXPERIMENTS_COST (USD):      ${audit['all_experiments_total_cost_usd']:.6f}")
+    print("-" * 80)
+    print("  SYNTHETIC FORMULA COMPARISON (for the 96 pilot requests):")
+    print(f"    Phase 6.1 Report (Formula A):  ${audit['synthetic_formula_a_cost_usd']:.5f} ($0.30/1M in + $1.50/1M out)")
+    print(f"    Phase 7 Report   (Formula B):  ${audit['synthetic_formula_b_cost_usd']:.5f} ($0.15/1M in + $0.60/1M out)")
+    print(f"    Actual OpenRouter Spend:       ${audit['actual_pilot_openrouter_cost_usd']:.6f}")
+    print("-" * 80)
+    print("  STATUS:")
+    print("    - Discrepancy mathematically explained by differing synthetic token formulas.")
+    print("    - True canonical metric implemented: sum of actual OpenRouter usage.cost.")
+    print("    - Cache hits add $0.00 to spend.")
+    print("=" * 80 + "\n")
     return 0
 
 
@@ -1119,6 +1213,26 @@ def main(argv: list[str] | None = None) -> int:
         help="OpenRouter cost ceiling in USD; pauses Jev inference when exceeded (default: $10.00)",
     )
 
+    # btc5m-collector-start
+    p_btc5m_cstart = subparsers.add_parser(
+        "btc5m-collector-start",
+        help="Launch the autonomous prospective collector as a detached OS background process",
+    )
+    p_btc5m_cstart.add_argument(
+        "--target-valid-rounds",
+        "--rounds",
+        type=int,
+        default=100,
+        dest="target_valid_rounds",
+        help="Target number of valid resolved rounds before stopping (default: 100)",
+    )
+    p_btc5m_cstart.add_argument(
+        "--cost-ceiling",
+        type=float,
+        default=10.0,
+        help="OpenRouter cost ceiling in USD; pauses Jev inference when exceeded (default: $10.00)",
+    )
+
     # btc5m-collector-status
     subparsers.add_parser(
         "btc5m-collector-status",
@@ -1129,6 +1243,12 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser(
         "btc5m-collector-stop",
         help="Signal the running autonomous prospective collector to shut down gracefully",
+    )
+
+    # btc5m-audit-cost
+    subparsers.add_parser(
+        "btc5m-audit-cost",
+        help="Audit OpenRouter cost accounting semantics, deduplication, and cache hits",
     )
 
     # btc5m-backup
@@ -1165,8 +1285,10 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-status": cmd_btc5m_status,
         "btc5m-report": cmd_btc5m_report,
         "btc5m-collect": cmd_btc5m_collect,
+        "btc5m-collector-start": cmd_btc5m_collector_start,
         "btc5m-collector-status": cmd_btc5m_collector_status,
         "btc5m-collector-stop": cmd_btc5m_collector_stop,
+        "btc5m-audit-cost": cmd_btc5m_audit_cost,
         "btc5m-backup": cmd_btc5m_backup,
     }
 

@@ -36,8 +36,11 @@ data/datasets/polymarket_*/
 data/normalized/
 data/backups/
 data/checkpoints/
+data/logs/
 data/*.json
 data/*.stop
+data/*.pid
+data/*.lock
 tmp/
 scratch/
 
