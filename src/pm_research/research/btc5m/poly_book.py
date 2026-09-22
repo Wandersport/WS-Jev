@@ -3,10 +3,13 @@
 Strictly read-only GET operations:
 - Endpoint: GET https://clob.polymarket.com/book?token_id={token_id}
 - Zero API keys or authentication headers
-- Validates token ID, prices, sizes, and timestamps
+- Validates token ID (token mismatch strictly invalidates book)
+- Distinguishes source_event_timestamp vs received_at_ms
 - Rejects crossed order books (best_bid >= best_ask)
 - Sorts bids descending and asks ascending
-- Computes best bid, best ask, midpoints, spreads, and market_q
+- Distinguishes observed native market consensus from cross-outcome implied diagnostic:
+    * Primary market baseline: native_up_mid (None if native UP book unavailable)
+    * Secondary diagnostic: cross_outcome_implied_mid (never confused with observed)
 """
 
 from __future__ import annotations
@@ -37,7 +40,7 @@ class ValidatedOrderBook:
     """A fully validated, sorted public order book for a single outcome token."""
 
     token_id: str
-    timestamp_ms: int
+    source_event_timestamp_ms: int | None
     received_at_ms: int
     bids: tuple[BookLevel, ...]  # Sorted descending by price
     asks: tuple[BookLevel, ...]  # Sorted ascending by price
@@ -49,22 +52,78 @@ class ValidatedOrderBook:
     is_valid: bool
     min_order_size: float | None
 
+    @property
+    def timestamp_ms(self) -> int:
+        """Backward compatibility: return source timestamp if available, else received."""
+        return self.source_event_timestamp_ms if self.source_event_timestamp_ms is not None else self.received_at_ms
+
+    @property
+    def receipt_age_ms(self) -> int:
+        return max(0, int(time.time() * 1000) - self.received_at_ms)
+
+    @property
+    def source_age_ms(self) -> int | None:
+        if self.source_event_timestamp_ms is None:
+            return None
+        return max(0, int(time.time() * 1000) - self.source_event_timestamp_ms)
+
 
 @dataclass(frozen=True)
 class PolymarketMarketState:
-    """Combined order book state for UP and DOWN tokens with market consensus probability."""
+    """Combined order book state for UP and DOWN tokens.
+
+    Preserves strict separation between observed native quotes and cross-outcome
+    implied diagnostic calculations.
+    """
 
     captured_at_ms: int
     up_book: ValidatedOrderBook
     down_book: ValidatedOrderBook
-    up_best_bid: float | None
-    up_best_ask: float | None
-    down_best_bid: float | None
-    down_best_ask: float | None
-    market_q: float | None  # Primary market probability: (up_best_bid + up_best_ask) / 2
+
+    # Native observed quotes (ground truth market baseline)
+    native_up_bid: float | None
+    native_up_ask: float | None
+    native_up_mid: float | None
+
+    native_down_bid: float | None
+    native_down_ask: float | None
+    native_down_mid: float | None
+
+    # Cross-outcome implied calculations (secondary diagnostic only)
+    cross_outcome_implied_up_bid: float | None
+    cross_outcome_implied_up_ask: float | None
+    cross_outcome_implied_mid: float | None
+
+    # Primary baseline benchmark: observed native_up_mid (None if unavailable)
+    market_q_primary: float | None
+    # Secondary diagnostic: implied from DOWN book complementarity
+    market_q_implied_cross_outcome: float | None
+
     spread: float | None
     is_valid: bool
     rejection_reason: str | None = None
+
+    # Backward compatibility properties
+    @property
+    def market_q(self) -> float | None:
+        """Primary market probability benchmark (observed native UP midpoint)."""
+        return self.market_q_primary
+
+    @property
+    def up_best_bid(self) -> float | None:
+        return self.native_up_bid
+
+    @property
+    def up_best_ask(self) -> float | None:
+        return self.native_up_ask
+
+    @property
+    def down_best_bid(self) -> float | None:
+        return self.native_down_bid
+
+    @property
+    def down_best_ask(self) -> float | None:
+        return self.native_down_ask
 
 
 def parse_and_validate_book(
@@ -76,7 +135,7 @@ def parse_and_validate_book(
     if not isinstance(raw_payload, dict):
         return ValidatedOrderBook(
             token_id=expected_token_id,
-            timestamp_ms=received_at_ms,
+            source_event_timestamp_ms=None,
             received_at_ms=received_at_ms,
             bids=(),
             asks=(),
@@ -89,14 +148,34 @@ def parse_and_validate_book(
             min_order_size=None,
         )
 
+    # Invariant A2: Token mismatch strictly invalidates the book
     asset_id = str(raw_payload.get("asset_id", "")).strip()
-    if asset_id != expected_token_id:
-        logger.warning(f"Order book asset_id mismatch: {asset_id} != {expected_token_id}")
+    if asset_id and expected_token_id and asset_id != expected_token_id:
+        logger.warning(
+            f"Order book asset_id mismatch: received '{asset_id}' != expected '{expected_token_id}'. Invalidating book."
+        )
+        return ValidatedOrderBook(
+            token_id=expected_token_id,
+            source_event_timestamp_ms=None,
+            received_at_ms=received_at_ms,
+            bids=(),
+            asks=(),
+            best_bid=None,
+            best_ask=None,
+            midpoint=None,
+            spread=None,
+            is_crossed=False,
+            is_valid=False,
+            min_order_size=None,
+        )
 
-    try:
-        ts_val = int(raw_payload.get("timestamp", received_at_ms))
-    except (ValueError, TypeError):
-        ts_val = received_at_ms
+    # Invariant A9: Distinguish source event timestamp from receipt timestamp
+    source_ts: int | None = None
+    if "timestamp" in raw_payload:
+        try:
+            source_ts = int(raw_payload["timestamp"])
+        except (ValueError, TypeError):
+            source_ts = None
 
     try:
         min_sz = float(raw_payload.get("min_order_size", 0.0))
@@ -152,7 +231,7 @@ def parse_and_validate_book(
 
     return ValidatedOrderBook(
         token_id=expected_token_id,
-        timestamp_ms=ts_val,
+        source_event_timestamp_ms=source_ts,
         received_at_ms=received_at_ms,
         bids=tuple(parsed_bids),
         asks=tuple(parsed_asks),
@@ -209,7 +288,7 @@ class PolymarketBookCollector:
         # Return empty invalid book on failure
         return ValidatedOrderBook(
             token_id=token_id,
-            timestamp_ms=t_recv,
+            source_event_timestamp_ms=None,
             received_at_ms=t_recv,
             bids=(),
             asks=(),
@@ -229,22 +308,28 @@ class PolymarketBookCollector:
         now_ms: int | None = None,
         max_age_ms: int = 15000,
     ) -> PolymarketMarketState:
-        """Fetch order books for both UP and DOWN tokens and compute market_q."""
+        """Fetch order books for both UP and DOWN tokens and compute primary and implied baselines."""
         now = now_ms if now_ms is not None else int(time.time() * 1000)
         up_book = self.fetch_book(up_token_id)
         down_book = self.fetch_book(down_token_id)
 
-        # Freshness check
+        # Freshness check based on receipt time (receipt_age)
         if now - up_book.received_at_ms > max_age_ms or now - down_book.received_at_ms > max_age_ms:
             return PolymarketMarketState(
                 captured_at_ms=now,
                 up_book=up_book,
                 down_book=down_book,
-                up_best_bid=up_book.best_bid,
-                up_best_ask=up_book.best_ask,
-                down_best_bid=down_book.best_bid,
-                down_best_ask=down_book.best_ask,
-                market_q=None,
+                native_up_bid=up_book.best_bid,
+                native_up_ask=up_book.best_ask,
+                native_up_mid=up_book.midpoint,
+                native_down_bid=down_book.best_bid,
+                native_down_ask=down_book.best_ask,
+                native_down_mid=down_book.midpoint,
+                cross_outcome_implied_up_bid=None,
+                cross_outcome_implied_up_ask=None,
+                cross_outcome_implied_mid=None,
+                market_q_primary=None,
+                market_q_implied_cross_outcome=None,
                 spread=up_book.spread,
                 is_valid=False,
                 rejection_reason="SKIP_STALE_POLYMARKET_BOOK",
@@ -256,68 +341,69 @@ class PolymarketBookCollector:
                 captured_at_ms=now,
                 up_book=up_book,
                 down_book=down_book,
-                up_best_bid=up_book.best_bid,
-                up_best_ask=up_book.best_ask,
-                down_best_bid=down_book.best_bid,
-                down_best_ask=down_book.best_ask,
-                market_q=None,
+                native_up_bid=up_book.best_bid,
+                native_up_ask=up_book.best_ask,
+                native_up_mid=up_book.midpoint,
+                native_down_bid=down_book.best_bid,
+                native_down_ask=down_book.best_ask,
+                native_down_mid=down_book.midpoint,
+                cross_outcome_implied_up_bid=None,
+                cross_outcome_implied_up_ask=None,
+                cross_outcome_implied_mid=None,
+                market_q_primary=None,
+                market_q_implied_cross_outcome=None,
                 spread=up_book.spread,
                 is_valid=False,
                 rejection_reason="CROSSED_ORDER_BOOK",
             )
 
-        # Synthesize effective UP best bid and ask using binary market complementarity:
-        # Ask on DOWN at P_D is equivalent to Bid on UP at (1.0 - P_D)
-        # Bid on DOWN at P_D is equivalent to Ask on UP at (1.0 - P_D)
-        cand_up_bids: list[float] = []
-        cand_up_asks: list[float] = []
+        # 1. Native Observed Market Baseline (Requirement A1)
+        # Primary benchmark is strictly the observed native UP midpoint when a valid
+        # two-sided native UP book exists. If unavailable, do not fabricate: set to None.
+        native_up_mid = up_book.midpoint if (up_book.is_valid and up_book.midpoint is not None) else None
+        market_q_primary = native_up_mid
 
-        if up_book.best_bid is not None:
-            cand_up_bids.append(up_book.best_bid)
+        # 2. Cross-Outcome Implied Diagnostic (Requirement A1)
+        # An ask on DOWN at P_D implies a bid on UP at (1.0 - P_D)
+        # A bid on DOWN at P_D implies an ask on UP at (1.0 - P_D)
+        implied_up_bid: float | None = None
+        implied_up_ask: float | None = None
         if down_book.best_ask is not None:
-            cand_up_bids.append(round(1.0 - down_book.best_ask, 4))
-
-        if up_book.best_ask is not None:
-            cand_up_asks.append(up_book.best_ask)
+            implied_up_bid = round(1.0 - down_book.best_ask, 4)
         if down_book.best_bid is not None:
-            cand_up_asks.append(round(1.0 - down_book.best_bid, 4))
+            implied_up_ask = round(1.0 - down_book.best_bid, 4)
 
-        eff_up_bid = max(cand_up_bids) if cand_up_bids else None
-        eff_up_ask = min(cand_up_asks) if cand_up_asks else None
+        implied_mid: float | None = None
+        if implied_up_bid is not None and implied_up_ask is not None and implied_up_bid < implied_up_ask:
+            implied_mid = round((implied_up_bid + implied_up_ask) / 2.0, 4)
 
-        # Primary market consensus probability market_q
-        market_q: float | None = None
-        spread: float | None = None
-
-        if eff_up_bid is not None and eff_up_ask is not None:
-            market_q = round((eff_up_bid + eff_up_ask) / 2.0, 4)
-            spread = round(max(0.0, eff_up_ask - eff_up_bid), 4)
-        elif eff_up_ask is not None and eff_up_ask <= 0.02:
-            # Bound at lower extreme (market heavily favoring DOWN)
-            market_q = eff_up_ask
-            spread = eff_up_ask
-        elif eff_up_bid is not None and eff_up_bid >= 0.98:
-            # Bound at upper extreme (market heavily favoring UP)
-            market_q = eff_up_bid
-            spread = round(1.0 - eff_up_bid, 4)
-
-        is_valid = bool(market_q is not None and (0.001 <= market_q <= 0.999))
+        # Validity: book is valid if we have at least one valid probability measure
+        # But market_q_primary strictly reflects native observed mid
+        is_valid = bool(
+            (market_q_primary is not None and 0.001 <= market_q_primary <= 0.999)
+            or (implied_mid is not None and 0.001 <= implied_mid <= 0.999)
+        )
         rejection_reason = None if is_valid else "NO_VALID_POLY_MARKET_ODDS"
 
         return PolymarketMarketState(
             captured_at_ms=now,
             up_book=up_book,
             down_book=down_book,
-            up_best_bid=eff_up_bid,
-            up_best_ask=eff_up_ask,
-            down_best_bid=down_book.best_bid,
-            down_best_ask=down_book.best_ask,
-            market_q=market_q,
-            spread=spread or up_book.spread,
+            native_up_bid=up_book.best_bid,
+            native_up_ask=up_book.best_ask,
+            native_up_mid=up_book.midpoint,
+            native_down_bid=down_book.best_bid,
+            native_down_ask=down_book.best_ask,
+            native_down_mid=down_book.midpoint,
+            cross_outcome_implied_up_bid=implied_up_bid,
+            cross_outcome_implied_up_ask=implied_up_ask,
+            cross_outcome_implied_mid=implied_mid,
+            market_q_primary=market_q_primary,
+            market_q_implied_cross_outcome=implied_mid,
+            spread=up_book.spread,
             is_valid=is_valid,
             rejection_reason=rejection_reason,
         )
 
     # Alias for API compatibility
     collect_market_state = fetch_market_state
-

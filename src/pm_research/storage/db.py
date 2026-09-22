@@ -414,6 +414,8 @@ class Database:
                     price_to_beat_source TEXT,
                     up_token_id TEXT,
                     down_token_id TEXT,
+                    up_outcome_index INTEGER NOT NULL DEFAULT 0,
+                    down_outcome_index INTEGER NOT NULL DEFAULT 1,
                     condition_id TEXT,
                     question TEXT,
                     discovered_at TEXT NOT NULL,
@@ -428,18 +430,27 @@ class Database:
                     round_slug TEXT NOT NULL,
                     target_horizon_sec INTEGER NOT NULL,
                     captured_at_ms INTEGER NOT NULL,
+                    capture_started_at_ms INTEGER,
+                    capture_completed_at_ms INTEGER,
+                    actual_freeze_timestamp_ms INTEGER,
                     target_scheduled_ms INTEGER NOT NULL,
                     timing_deviation_ms INTEGER NOT NULL,
                     seconds_remaining REAL NOT NULL,
                     reference_source TEXT NOT NULL,
                     price_to_beat REAL,
                     price_to_beat_source TEXT,
+                    anchor_price REAL,
+                    anchor_source TEXT,
+                    anchor_source_timestamp_ms INTEGER,
+                    anchor_received_timestamp_ms INTEGER,
                     current_reference_price REAL NOT NULL,
                     ref_distance_to_beat_bps REAL,
                     ref_return_10s_bps REAL,
                     ref_return_30s_bps REAL,
                     ref_return_60s_bps REAL,
                     market_q REAL,
+                    market_q_primary REAL,
+                    market_q_implied_cross_outcome REAL,
                     up_best_bid REAL,
                     up_best_ask REAL,
                     down_best_bid REAL,
@@ -458,6 +469,8 @@ class Database:
                     binance_return_30s_bps REAL,
                     binance_return_60s_bps REAL,
                     binance_return_since_open_bps REAL,
+                    binance_open_mid REAL,
+                    binance_open_timestamp_ms INTEGER,
                     binance_basis_bps REAL,
                     is_valid INTEGER NOT NULL,
                     skip_reason TEXT,
@@ -484,6 +497,14 @@ class Database:
                     from_cache INTEGER NOT NULL,
                     raw_response_hash TEXT NOT NULL,
                     created_at_utc TEXT NOT NULL,
+                    request_started_at_utc TEXT,
+                    response_received_at_utc TEXT,
+                    response_received_at_ms INTEGER,
+                    round_end_ms INTEGER,
+                    snapshot_hash TEXT,
+                    request_order INTEGER NOT NULL DEFAULT 1,
+                    is_valid INTEGER NOT NULL DEFAULT 1,
+                    rejection_reason TEXT,
                     UNIQUE(snapshot_id, condition)
                 );
 
@@ -1390,9 +1411,10 @@ class Database:
         sql = """
             INSERT OR REPLACE INTO btc5m_rounds (
                 round_slug, start_epoch, end_epoch, duration_sec, price_to_beat,
-                price_to_beat_source, up_token_id, down_token_id, condition_id,
-                question, discovered_at, status, resolved_outcome, resolution_price, settled_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                price_to_beat_source, up_token_id, down_token_id, up_outcome_index,
+                down_outcome_index, condition_id, question, discovered_at, status,
+                resolved_outcome, resolution_price, settled_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         now_utc = datetime.now().isoformat()
         params = (
@@ -1404,6 +1426,8 @@ class Database:
             round_info.price_to_beat_source,
             round_info.up_token_id,
             round_info.down_token_id,
+            round_info.up_outcome_index,
+            round_info.down_outcome_index,
             round_info.condition_id,
             round_info.question,
             now_utc,
@@ -1559,8 +1583,11 @@ class Database:
                 condition, model_id, request_hash, captured_at_ms,
                 market_q, jev_up_prob, jev_down_prob, jev_choice,
                 confidence, input_tokens, output_tokens, latency_ms,
-                from_cache, raw_response_hash, created_at_utc
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                from_cache, raw_response_hash, created_at_utc,
+                request_started_at_utc, response_received_at_utc,
+                response_received_at_ms, round_end_ms, snapshot_hash,
+                request_order, is_valid, rejection_reason
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
         params = (
             forecast.forecast_id,
@@ -1582,6 +1609,14 @@ class Database:
             1 if forecast.from_cache else 0,
             forecast.raw_response_hash,
             forecast.created_at_utc,
+            forecast.request_started_at_utc,
+            forecast.response_received_at_utc,
+            forecast.response_received_at_ms,
+            forecast.round_end_ms,
+            forecast.snapshot_hash,
+            forecast.request_order,
+            1 if forecast.is_valid else 0,
+            forecast.rejection_reason,
         )
         if conn is not None:
             conn.execute(sql, params)
@@ -1593,6 +1628,7 @@ class Database:
         self,
         round_slug: str | None = None,
         condition: str | None = None,
+        valid_only: bool = False,
     ) -> list[BTC5mAblationForecast]:
         """Retrieve ablation forecasts."""
         sql = "SELECT * FROM btc5m_forecasts"
@@ -1604,6 +1640,8 @@ class Database:
         if condition:
             clauses.append("condition = ?")
             params.append(condition)
+        if valid_only:
+            clauses.append("is_valid = 1")
         if clauses:
             sql += " WHERE " + " AND ".join(clauses)
         sql += " ORDER BY captured_at_ms ASC"
@@ -1631,6 +1669,14 @@ class Database:
                     from_cache=bool(r["from_cache"]),
                     raw_response_hash=r["raw_response_hash"],
                     created_at_utc=r["created_at_utc"],
+                    request_started_at_utc=r["request_started_at_utc"] if "request_started_at_utc" in r.keys() else None,
+                    response_received_at_utc=r["response_received_at_utc"] if "response_received_at_utc" in r.keys() else None,
+                    response_received_at_ms=int(r["response_received_at_ms"]) if ("response_received_at_ms" in r.keys() and r["response_received_at_ms"] is not None) else None,
+                    round_end_ms=int(r["round_end_ms"]) if ("round_end_ms" in r.keys() and r["round_end_ms"] is not None) else None,
+                    snapshot_hash=r["snapshot_hash"] if "snapshot_hash" in r.keys() else None,
+                    request_order=int(r["request_order"]) if "request_order" in r.keys() else 1,
+                    is_valid=bool(r["is_valid"]) if "is_valid" in r.keys() else True,
+                    rejection_reason=r["rejection_reason"] if "rejection_reason" in r.keys() else None,
                 )
                 for r in rows
             ]

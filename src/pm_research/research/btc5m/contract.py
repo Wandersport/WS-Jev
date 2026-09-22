@@ -2,9 +2,10 @@
 
 Strictly read-only and unauthenticated.
 Validates:
-- 300-second duration invariant
-- Outcome token mapping by label ("Up", "Down")
-- Authoritative resolution source verification (Chainlink TWAP stream)
+- Real 300-second metadata duration check against deterministic slug epoch
+- Locates exact market matching slug (never blindly taking markets[0])
+- Outcome token mapping by label ("Up", "Down") and indices
+- Strict authoritative resolution source verification (Chainlink 60s TWAP stream)
 - Authoritative Price-to-Beat (anchor) from metadata or exact start boundary
 """
 
@@ -50,6 +51,8 @@ class BTC5mRoundInfo:
     duration_seconds: int
     up_token_id: str
     down_token_id: str
+    up_outcome_index: int
+    down_outcome_index: int
     accepting_orders: bool
     price_to_beat: float | None
     price_to_beat_source: str | None
@@ -114,6 +117,38 @@ class BTC5mOfficialResolution:
         return self.resolved_at_utc.isoformat()
 
 
+def validate_settlement_source_url(url: str) -> bool:
+    """Strictly validate that resolution source is the official BTC/USD 60s TWAP stream.
+
+    Invariants (Requirement A4):
+    - Scheme: https
+    - Host: data.chain.link or data-api.chain.link
+    - Path must identify btc-usd-twap-60s-streams
+    - Strictly reject: 30-second TWAPs, other cryptocurrencies, generic text
+    """
+    if not url or not isinstance(url, str):
+        return False
+    try:
+        parsed = urllib.parse.urlparse(url.strip())
+        if parsed.scheme != "https":
+            return False
+        host = (parsed.hostname or "").lower()
+        if host not in ("data.chain.link", "data-api.chain.link"):
+            return False
+        path = (parsed.path or "").lower()
+        # Must explicitly contain btc-usd and twap-60s
+        if "btc-usd" not in path or "twap-60s" not in path:
+            return False
+        # Reject 30-second streams or other assets
+        if "30s" in path or "thirty" in path:
+            return False
+        if "eth" in path or "sol" in path:
+            return False
+        return True
+    except Exception:
+        return False
+
+
 class BTC5mContractManager:
     """Manages discovery and contract verification for Polymarket BTC 5m markets."""
 
@@ -175,9 +210,28 @@ class BTC5mContractManager:
         if not isinstance(markets, list) or len(markets) == 0:
             return None, SKIP_INCOMPLETE_ROUND_METADATA
 
-        market = markets[0]
-        if not isinstance(market, dict):
+        # Requirement A3: Do not simply take markets[0]. Locate the market whose
+        # slug or identifier actually matches the expected BTC 5m contract.
+        matched_market: dict[str, Any] | None = None
+        for m in markets:
+            if not isinstance(m, dict):
+                continue
+            m_slug = str(m.get("slug") or m.get("marketSlug") or "").strip()
+            if m_slug == expected_slug:
+                matched_market = m
+                break
+
+        # Fallback if single market in event matching event slug
+        if matched_market is None:
+            event_slug = str(event_data.get("slug") or "").strip()
+            if event_slug == expected_slug and len(markets) == 1 and isinstance(markets[0], dict):
+                matched_market = markets[0]
+
+        if matched_market is None:
+            logger.warning(f"No market in event matched expected slug '{expected_slug}'")
             return None, SKIP_INCOMPLETE_ROUND_METADATA
+
+        market = matched_market
 
         # 1. Validate condition ID
         condition_id = str(market.get("conditionId", "")).strip()
@@ -188,22 +242,15 @@ class BTC5mContractManager:
         question = str(market.get("question") or event_data.get("title") or "").strip()
         description = str(market.get("description") or event_data.get("description") or "").strip()
 
-        # 2. Validate Settlement Source
+        # 2. Requirement A4: Strict Settlement Source Verification
         res_source = str(
             market.get("resolutionSource") or event_data.get("resolutionSource") or ""
-        ).strip().lower()
-        has_chainlink = "chainlink" in res_source or "chain.link" in res_source
-        has_twap = "twap" in res_source
-        if not (has_chainlink and has_twap):
-            # Re-check description if resolutionSource URL was simplified
-            desc_lower = description.lower()
-            desc_chainlink = "chainlink" in desc_lower or "chain.link" in desc_lower
-            desc_twap = "twap" in desc_lower
-            if not (desc_chainlink and desc_twap):
-                logger.warning(f"Unsupported settlement source '{res_source}' for {expected_slug}")
-                return None, SKIP_UNSUPPORTED_SETTLEMENT_SOURCE
+        ).strip()
+        if not validate_settlement_source_url(res_source):
+            logger.warning(f"Unsupported settlement source URL '{res_source}' for {expected_slug}")
+            return None, SKIP_UNSUPPORTED_SETTLEMENT_SOURCE
 
-        # 3. Validate outcomes strictly by label ("Up" and "Down")
+        # 3. Validate outcomes strictly by label ("Up" and "Down") and preserve indices (Requirement A7)
         outcomes_raw = market.get("outcomes")
         if isinstance(outcomes_raw, str):
             try:
@@ -249,25 +296,59 @@ class BTC5mContractManager:
         up_token_id = str(token_ids[up_idx])
         down_token_id = str(token_ids[down_idx])
 
-        # 4. Validate exact 300-second duration
-        # Derive epoch start from slug e.g. btc-updown-5m-1790091900
+        # 4. Requirement A3: Verify the actual 300-second contract from metadata
+        # Do NOT derive duration tautologically from slug.
         try:
             slug_epoch = int(expected_slug.split("-")[-1])
-            start_dt = datetime.fromtimestamp(slug_epoch, tz=timezone.utc)
-            end_dt = datetime.fromtimestamp(slug_epoch + 300, tz=timezone.utc)
-            duration = 300
         except Exception:
-            # Fall back to parsing startDate / endDate
-            start_dt_raw = parse_iso_utc(market.get("startDate") or market.get("acceptingOrdersTimestamp"))
-            end_dt_raw = parse_iso_utc(market.get("endDate") or market.get("resolutionTime"))
-            if start_dt_raw is None or end_dt_raw is None:
-                return None, SKIP_INCOMPLETE_ROUND_METADATA
-            start_dt = ensure_utc(start_dt_raw)
-            end_dt = ensure_utc(end_dt_raw)
-            duration = int((end_dt - start_dt).total_seconds())
+            return None, SKIP_INCOMPLETE_ROUND_METADATA
 
-        if duration != 300:
-            logger.warning(f"Market {expected_slug} duration is {duration}s != 300s")
+        metadata_start_raw = (
+            market.get("startDate")
+            or market.get("acceptingOrdersTimestamp")
+            or market.get("startTime")
+            or event_data.get("startDate")
+        )
+        metadata_end_raw = (
+            market.get("endDate")
+            or market.get("resolutionTime")
+            or market.get("endTime")
+            or event_data.get("endDate")
+        )
+
+        if not metadata_start_raw or not metadata_end_raw:
+            return None, SKIP_INCOMPLETE_ROUND_METADATA
+
+        start_dt_parsed = parse_iso_utc(str(metadata_start_raw))
+        end_dt_parsed = parse_iso_utc(str(metadata_end_raw))
+
+        if start_dt_parsed is None or end_dt_parsed is None:
+            return None, SKIP_INCOMPLETE_ROUND_METADATA
+
+        start_dt = ensure_utc(start_dt_parsed)
+        end_dt = ensure_utc(end_dt_parsed)
+
+        metadata_start_ts = start_dt.timestamp()
+        metadata_end_ts = end_dt.timestamp()
+        metadata_duration = metadata_end_ts - metadata_start_ts
+
+        # Tolerances for metadata timestamp alignment (narrowly justified <= 2.0s)
+        if abs(metadata_duration - 300.0) > 2.0:
+            logger.warning(
+                f"Market {expected_slug} duration {metadata_duration}s deviates from 300s > 2s"
+            )
+            return None, SKIP_NON_300S_DURATION
+
+        if abs(metadata_end_ts - (slug_epoch + 300.0)) > 2.0:
+            logger.warning(
+                f"Market {expected_slug} metadata end {metadata_end_ts} deviates from slug end > 2s"
+            )
+            return None, SKIP_NON_300S_DURATION
+
+        if abs(metadata_start_ts - float(slug_epoch)) > 2.0:
+            logger.warning(
+                f"Market {expected_slug} metadata start {metadata_start_ts} deviates from slug start > 2s"
+            )
             return None, SKIP_NON_300S_DURATION
 
         # 5. Extract Price-to-Beat (anchor) from eventMetadata
@@ -311,9 +392,11 @@ class BTC5mContractManager:
             settlement_rule="UP if final Chainlink reference price >= priceToBeat, otherwise DOWN",
             start_time_utc=start_dt,
             end_time_utc=end_dt,
-            duration_seconds=duration,
+            duration_seconds=300,
             up_token_id=up_token_id,
             down_token_id=down_token_id,
+            up_outcome_index=up_idx,
+            down_outcome_index=down_idx,
             accepting_orders=accepting_orders,
             price_to_beat=price_to_beat,
             price_to_beat_source=price_to_beat_source,
@@ -321,7 +404,7 @@ class BTC5mContractManager:
             fee_exponent=fee_exponent,
             metadata={
                 "event_id": str(event_data.get("id", "")),
-                "slug_epoch": slug_epoch if "slug_epoch" in locals() else None,
+                "slug_epoch": slug_epoch,
                 "event_metadata": event_metadata,
             },
         )
@@ -352,8 +435,15 @@ class BTC5mContractManager:
     def fetch_official_resolution(
         self, target: BTC5mRoundInfo | str
     ) -> BTC5mOfficialResolution | None:
-        """Query Polymarket Data API for authoritative resolution state."""
+        """Query Polymarket Data API for authoritative resolution state.
+
+        Requirement A7: Never assume payouts[0] is UP and payouts[1] is DOWN.
+        Use authoritative outcome indices from verified BTC5mRoundInfo.
+        """
         condition_id = target.condition_id if isinstance(target, BTC5mRoundInfo) else target
+        up_idx = target.up_outcome_index if isinstance(target, BTC5mRoundInfo) else 0
+        down_idx = target.down_outcome_index if isinstance(target, BTC5mRoundInfo) else 1
+
         url = f"{self.data_api_base}/v2/resolutions?condition={urllib.parse.quote(condition_id)}"
         req = urllib.request.Request(
             url,
@@ -387,8 +477,19 @@ class BTC5mContractManager:
                 if not isinstance(payouts_raw, list) or len(payouts_raw) != 2:
                     return None
 
-                p_up_raw = float(payouts_raw[0])
-                p_down_raw = float(payouts_raw[1])
+                # Check if row itself contains outcomes to override index if present
+                row_outcomes = row.get("outcomes")
+                if isinstance(row_outcomes, list) and len(row_outcomes) == 2:
+                    for i, o in enumerate(row_outcomes):
+                        o_clean = str(o).strip().lower()
+                        if o_clean == "up":
+                            up_idx = i
+                        elif o_clean == "down":
+                            down_idx = i
+
+                # Requirement A7: Map official payouts using verified outcome indices
+                p_up_raw = float(payouts_raw[up_idx])
+                p_down_raw = float(payouts_raw[down_idx])
                 total = p_up_raw + p_down_raw
                 if total <= 0:
                     return None

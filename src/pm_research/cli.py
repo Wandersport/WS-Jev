@@ -671,8 +671,14 @@ def cmd_btc5m_probe(args: argparse.Namespace) -> int:
     print(f"  Polymarket Book:                      {'PASS' if results['polymarket_book'] else 'FAIL'}")
     print(f"  Binance USD-M Perpetual (FAPI):       {'PASS' if results['binance_perp'] else 'FAIL'}")
     print(f"  OpenRouter TypeSafe Jev API Key:      {'PASS' if results['openrouter_jev'] else 'FAIL'}")
+    print("\n  Market Baseline Provenance (Requirement B1):")
+    details = results.get("details", {})
+    print(f"    native_market_q:                 {details.get('native_market_q')}")
+    print(f"    cross_outcome_implied_q:         {details.get('cross_outcome_implied_q')}")
+    print("    PRIMARY_MARKET_BASELINE_METHOD:  NATIVE_UP_MIDPOINT")
+    print("    SYNTHETIC_COMPLEMENT_AS_PRIMARY: NO")
     print("\n  Probe Details:")
-    for k, v in results.get("details", {}).items():
+    for k, v in details.items():
         print(f"    - {k}: {v}")
     print("=" * 80 + "\n")
     all_ok = (
@@ -780,6 +786,9 @@ def cmd_btc5m_report(args: argparse.Namespace) -> int:
     print("\n" + "=" * 80)
     print("  [!] BTC 5-MINUTE ABLATION FORECASTING BENCHMARK REPORT")
     print("=" * 80)
+    print("  PRIMARY_MARKET_BASELINE_METHOD=NATIVE_UP_MIDPOINT")
+    print("  SYNTHETIC_COMPLEMENT_USED_AS_PRIMARY=NO")
+    print("  CROSS_OUTCOME_IMPLIED_VALUE_RETAINED_AS_DIAGNOSTIC=YES")
 
     if summary.get("status") == "NO_RESOLVED_DATA":
         print("\n  [!] No resolved rounds with completed scores found in database.")
@@ -791,7 +800,7 @@ def cmd_btc5m_report(args: argparse.Namespace) -> int:
     print(f"  Total Evaluated Snapshots: {summary['total_scores']}")
 
     print("\n" + "-" * 80)
-    print("  ABLATION PERFORMANCE SUMMARY (vs Raw Polymarket Consensus)")
+    print("  ABLATION PERFORMANCE SUMMARY (vs Raw Polymarket Native Consensus)")
     print("-" * 80)
     print(f"  {'Condition':<28} | {'N':>4} | {'Brier':>7} | {'MktBrier':>8} | {'DeltaBrier':>10} | {'95% Bootstrap CI':<19}")
     print("  " + "-" * 86)
@@ -799,7 +808,14 @@ def cmd_btc5m_report(args: argparse.Namespace) -> int:
     for cond, m in summary.get("metrics_by_condition", {}).items():
         ci_str = f"[{m['delta_brier_95ci'][0]:+.4f}, {m['delta_brier_95ci'][1]:+.4f}]" if m.get("delta_brier_95ci") else "N/A"
         delta_str = f"{m['delta_brier']:+.4f}" if m.get('delta_brier') is not None else "N/A"
-        print(f"  {cond:<28} | {m['count']:>4} | {m['mean_brier']:>7.4f} | {m['market_brier']:>8.4f} | {delta_str:>10} | {ci_str:<19}")
+        print(f"  {cond:<28} | {m.get('paired_count', 0):>4} | {m['mean_brier']:>7.4f} | {m['market_brier']:>8.4f} | {delta_str:>10} | {ci_str:<19}")
+
+    if summary.get("paired_deltas"):
+        print("\n" + "-" * 80)
+        print("  PAIRED ABLATION COMPARISONS")
+        print("-" * 80)
+        for pair_name, val in summary["paired_deltas"].items():
+            print(f"  {pair_name:<35} = {val:+.5f}")
 
     print("\n" + "-" * 80)
     print("  Notes:")

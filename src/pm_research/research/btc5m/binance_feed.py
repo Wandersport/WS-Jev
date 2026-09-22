@@ -6,13 +6,11 @@ Strictly unauthenticated read-only access:
 - WebSocket (optional/streaming): wss://fstream.binance.com/ws/btcusdt@depth20@100ms
 - ZERO credentials, API keys, or signed endpoints.
 - Rejects crossed order books.
-- Computes:
-  * Top-5 and Top-20 depth imbalance
-  * Microprice and microprice offset (bps)
-  * Taker flow buy/sell volume and flow imbalance over 10s, 30s, 60s windows
-    (returns None if data coverage is less than the window, never fabricating zero)
-  * Price returns over 10s, 30s, 60s windows and since round start (bps)
-  * Basis vs Chainlink reference (bps)
+- Strict provenance (Requirements A8, A9):
+    * Distinguishes source_event_timestamp vs received_at_ms
+    * Explicitly separates receipt_age_ms from source_age_ms
+    * Binance return since open uses ONLY observed Binance perp opening mid, NEVER Chainlink anchor
+    * Basis vs Chainlink reference is kept as the legitimate cross-source measure
 """
 
 from __future__ import annotations
@@ -53,12 +51,32 @@ class BinancePerpFeatures:
     return_10s_bps: float | None
     return_30s_bps: float | None
     return_60s_bps: float | None
+
+    # Requirement A8: Return since open derived ONLY from Binance observed open price
     return_since_round_open_bps: float | None
+    binance_open_mid: float | None
+    binance_open_timestamp_ms: int | None
+
+    # Legitimate cross-source basis vs Chainlink reference
     basis_vs_ref_bps: float | None
-    snapshot_time_ms: int
-    data_age_ms: int
+
+    # Requirement A9: Source vs received timestamps
+    source_event_timestamp_ms: int | None
+    received_at_ms: int
+    receipt_age_ms: int
+    source_age_ms: int | None
+
     is_valid: bool
     rejection_reason: str | None = None
+
+    @property
+    def snapshot_time_ms(self) -> int:
+        return self.received_at_ms
+
+    @property
+    def data_age_ms(self) -> int:
+        """Backward compatibility: return receipt age."""
+        return self.receipt_age_ms
 
 
 class BinancePerpFeed:
@@ -67,25 +85,36 @@ class BinancePerpFeed:
     def __init__(self, max_trade_history: int = 5000) -> None:
         self._bids: list[tuple[float, float]] = []  # sorted descending by price: (price, qty)
         self._asks: list[tuple[float, float]] = []  # sorted ascending by price: (price, qty)
-        self._depth_timestamp_ms: int = 0
+        self._depth_source_timestamp_ms: int | None = None
+        self._depth_received_at_ms: int = 0
         # trades stored as: (timestamp_ms, price, qty, is_buyer_maker)
-        # is_buyer_maker == True -> maker was buyer -> taker was seller (taker sell)
-        # is_buyer_maker == False -> maker was seller -> taker was buyer (taker buy)
         self._trades: collections.deque[tuple[int, float, float, bool]] = collections.deque(
             maxlen=max_trade_history
         )
+        # Observed Binance midpoints at round boundaries: round_slug -> (mid, timestamp_ms)
+        self._recorded_round_opens: dict[str, tuple[float, int]] = {}
+
+    def record_round_open(self, round_slug: str, mid_price: float, timestamp_ms: int) -> None:
+        """Record the observed Binance perpetual midpoint at the round opening boundary."""
+        if mid_price > 0:
+            self._recorded_round_opens[round_slug] = (mid_price, timestamp_ms)
+
+    def get_round_open(self, round_slug: str) -> tuple[float, int] | None:
+        """Retrieve recorded Binance opening mid for a round."""
+        return self._recorded_round_opens.get(round_slug)
 
     def add_depth(
         self,
         bids: list[tuple[float, float]],
         asks: list[tuple[float, float]],
-        timestamp_ms: int,
+        source_timestamp_ms: int | None,
+        received_at_ms: int | None = None,
     ) -> None:
         """Inject or update depth levels."""
-        # Sort bids descending, asks ascending
         self._bids = sorted(bids, key=lambda x: x[0], reverse=True)
         self._asks = sorted(asks, key=lambda x: x[0])
-        self._depth_timestamp_ms = timestamp_ms
+        self._depth_source_timestamp_ms = source_timestamp_ms
+        self._depth_received_at_ms = received_at_ms or int(time.time() * 1000)
 
     def add_trade(
         self,
@@ -108,11 +137,13 @@ class BinancePerpFeed:
     def fetch_rest_snapshot(
         self,
         ref_price: float | None = None,
-        round_start_price: float | None = None,
+        binance_open_price: float | None = None,
+        binance_open_timestamp_ms: int | None = None,
+        round_slug: str | None = None,
         timeout_sec: float = 5.0,
     ) -> BinancePerpFeatures:
         """Fetch depth and aggregate trades via public read-only REST endpoints."""
-        now_ms = int(time.time() * 1000)
+        recv_ms = int(time.time() * 1000)
 
         # 1. Fetch depth
         depth_url = f"{BINANCE_FAPI_BASE}/fapi/v1/depth?symbol=BTCUSDT&limit=20"
@@ -129,8 +160,11 @@ class BinancePerpFeed:
 
         bids = [(float(p), float(q)) for p, q in raw_depth.get("bids", [])]
         asks = [(float(p), float(q)) for p, q in raw_depth.get("asks", [])]
-        depth_ts = int(raw_depth.get("T", now_ms))
-        self.add_depth(bids, asks, depth_ts)
+
+        # Requirement A9: Extract source exchange timestamp if present, otherwise None
+        raw_ts = raw_depth.get("T") or raw_depth.get("E")
+        source_ts: int | None = int(raw_ts) if raw_ts is not None else None
+        self.add_depth(bids, asks, source_ts, recv_ms)
 
         # 2. Fetch recent aggTrades
         trades_url = f"{BINANCE_FAPI_BASE}/fapi/v1/aggTrades?symbol=BTCUSDT&limit=1000"
@@ -146,7 +180,6 @@ class BinancePerpFeed:
             raw_trades = json.loads(resp.read().decode("utf-8"))
 
         for item in raw_trades:
-            # item: {'a': agg_id, 'p': price, 'q': qty, 'f': first_id, 'l': last_id, 'T': time, 'm': is_buyer_maker}
             try:
                 t_ms = int(item["T"])
                 p_val = float(item["p"])
@@ -156,19 +189,42 @@ class BinancePerpFeed:
             except (KeyError, ValueError, TypeError):
                 continue
 
+        # Lookup recorded open price if round_slug provided
+        if round_slug and binance_open_price is None:
+            rec = self.get_round_open(round_slug)
+            if rec:
+                binance_open_price, binance_open_timestamp_ms = rec
+
         return self.compute_features(
-            now_ms=now_ms,
+            now_ms=recv_ms,
             ref_price=ref_price,
-            round_start_price=round_start_price,
+            binance_open_price=binance_open_price,
+            binance_open_timestamp_ms=binance_open_timestamp_ms,
         )
 
     def compute_features(
         self,
         now_ms: int,
         ref_price: float | None = None,
-        round_start_price: float | None = None,
+        binance_open_price: float | None = None,
+        binance_open_timestamp_ms: int | None = None,
+        round_start_price: float | None = None,  # Deprecated parameter; mapped to binance_open_price
     ) -> BinancePerpFeatures:
-        """Extract all microstructure features from current state."""
+        """Extract all microstructure features from current state.
+
+        Requirement A8: Binance return since open is calculated strictly from
+        binance_open_price (never from Chainlink anchor).
+        Requirement A9: Distinguish source event timestamp from receipt timestamp.
+        """
+        # Fallback for API compatibility if caller passed round_start_price
+        if binance_open_price is None and round_start_price is not None:
+            binance_open_price = round_start_price
+
+        source_ts = self._depth_source_timestamp_ms
+        recv_ts = self._depth_received_at_ms or now_ms
+        receipt_age = max(0, now_ms - recv_ts)
+        source_age = max(0, now_ms - source_ts) if source_ts is not None else None
+
         if not self._bids or not self._asks:
             return BinancePerpFeatures(
                 best_bid=0.0,
@@ -190,9 +246,13 @@ class BinancePerpFeed:
                 return_30s_bps=None,
                 return_60s_bps=None,
                 return_since_round_open_bps=None,
+                binance_open_mid=binance_open_price,
+                binance_open_timestamp_ms=binance_open_timestamp_ms,
                 basis_vs_ref_bps=None,
-                snapshot_time_ms=now_ms,
-                data_age_ms=0,
+                source_event_timestamp_ms=source_ts,
+                received_at_ms=recv_ts,
+                receipt_age_ms=receipt_age,
+                source_age_ms=source_age,
                 is_valid=False,
                 rejection_reason="Empty bids or asks in order book",
             )
@@ -224,9 +284,13 @@ class BinancePerpFeed:
                 return_30s_bps=None,
                 return_60s_bps=None,
                 return_since_round_open_bps=None,
+                binance_open_mid=binance_open_price,
+                binance_open_timestamp_ms=binance_open_timestamp_ms,
                 basis_vs_ref_bps=None,
-                snapshot_time_ms=now_ms,
-                data_age_ms=max(0, now_ms - self._depth_timestamp_ms),
+                source_event_timestamp_ms=source_ts,
+                received_at_ms=recv_ts,
+                receipt_age_ms=receipt_age,
+                source_age_ms=source_age,
                 is_valid=False,
                 rejection_reason=f"Crossed order book: bid {best_bid} >= ask {best_ask}",
             )
@@ -254,16 +318,16 @@ class BinancePerpFeed:
         tot20 = top20_bid_qty + top20_ask_qty
         top20_imbalance = (top20_bid_qty - top20_ask_qty) / tot20 if tot20 > 0 else 0.0
 
-        # Basis vs reference feed
+        # Basis vs reference feed (legitimate cross-source measure)
         basis_vs_ref_bps: float | None = None
         if ref_price is not None and ref_price > 0:
             basis_vs_ref_bps = round(((mid_price - ref_price) / ref_price) * 10_000.0, 3)
 
-        # Return since round open
+        # Requirement A8: Return since round open uses ONLY observed Binance open price
         return_since_round_open_bps: float | None = None
-        if round_start_price is not None and round_start_price > 0:
+        if binance_open_price is not None and binance_open_price > 0:
             return_since_round_open_bps = round(
-                ((mid_price - round_start_price) / round_start_price) * 10_000.0, 3
+                ((mid_price - binance_open_price) / binance_open_price) * 10_000.0, 3
             )
 
         # Taker flow and price returns over rolling windows: 10s, 30s, 60s
@@ -274,8 +338,6 @@ class BinancePerpFeed:
         ret_10s = self._compute_price_return_window(now_ms, mid_price, window_sec=10)
         ret_30s = self._compute_price_return_window(now_ms, mid_price, window_sec=30)
         ret_60s = self._compute_price_return_window(now_ms, mid_price, window_sec=60)
-
-        data_age_ms = max(0, now_ms - self._depth_timestamp_ms) if self._depth_timestamp_ms else 0
 
         return BinancePerpFeatures(
             best_bid=round(best_bid, 2),
@@ -297,9 +359,13 @@ class BinancePerpFeed:
             return_30s_bps=round(ret_30s, 3) if ret_30s is not None else None,
             return_60s_bps=round(ret_60s, 3) if ret_60s is not None else None,
             return_since_round_open_bps=return_since_round_open_bps,
+            binance_open_mid=binance_open_price,
+            binance_open_timestamp_ms=binance_open_timestamp_ms,
             basis_vs_ref_bps=basis_vs_ref_bps,
-            snapshot_time_ms=now_ms,
-            data_age_ms=data_age_ms,
+            source_event_timestamp_ms=source_ts,
+            received_at_ms=recv_ts,
+            receipt_age_ms=receipt_age,
+            source_age_ms=source_age,
             is_valid=True,
             rejection_reason=None,
         )
@@ -322,7 +388,6 @@ class BinancePerpFeed:
 
         oldest_ts = self._trades[0][0]
         # Invariant: data coverage requirement
-        # Oldest trade must be at or before cutoff_ms, otherwise we don't have the full window
         if oldest_ts > cutoff_ms:
             return None
 
@@ -333,10 +398,8 @@ class BinancePerpFeed:
             if ts < cutoff_ms:
                 break
             if is_buyer_maker:
-                # Maker was buyer -> taker was seller -> taker sell
                 sell_qty += qty
             else:
-                # Maker was seller -> taker was buyer -> taker buy
                 buy_qty += qty
 
         tot = buy_qty + sell_qty
@@ -363,7 +426,6 @@ class BinancePerpFeed:
         if oldest_ts > target_ts:
             return None
 
-        # Find trade closest to target_ts (searching backwards)
         past_price: float | None = None
         for ts, price, _qty, _m in reversed(self._trades):
             if ts <= target_ts:

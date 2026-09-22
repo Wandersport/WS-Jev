@@ -4,16 +4,20 @@ Connects to Polymarket RTDS (Real-Time Data Service) via public read-only WebSoc
 or maintains injected ticks for offline reproducible testing.
 
 Topics handled:
-- crypto_prices_chainlink (spot)
-- crypto_prices_twap_sixty (60s TWAP, primary settlement stream for BTC 5m)
-- crypto_prices_twap_thirty (30s TWAP)
+- crypto_prices_chainlink (spot) -> SOURCE_SPOT
+- crypto_prices_twap_sixty (60s TWAP, official settlement stream) -> SOURCE_TWAP_60S
+- crypto_prices_twap_thirty (30s TWAP) -> SOURCE_TWAP_30S
 
-Invariants:
-- Read-only unauthenticated access (NO credentials)
+Strict Invariants (Requirements A5, A6, A9):
+- Unauthenticated read-only access (NO credentials)
 - Host allowlist: ws-live-data.polymarket.com
+- Strictly rejects generic/unknown RTDS topics from masquerading as settlement stream
+- Strict anchor hierarchy:
+    1. Authoritative Gamma priceToBeat
+    2. Exact official 60s TWAP opening boundary tick (t.timestamp_ms == round_start_ms)
+- Distinguishes source_event_timestamp vs received_at_ms
 - Rejects future timestamps (> now + 2000ms)
 - Rejects stale ticks (> 30 minutes old)
-- Detects exact opening boundary anchor (timestamp == round_start_ms)
 - Computes 10s, 30s, 60s returns and anchor distance in basis points
 """
 
@@ -47,9 +51,9 @@ class ReferenceTick:
     """A single validated timestamped Chainlink BTC/USD price point."""
 
     source: str  # SOURCE_SPOT, SOURCE_TWAP_60S, or SOURCE_TWAP_30S
-    timestamp_ms: int
+    timestamp_ms: int  # Source event timestamp from provider
     price: float
-    received_at_ms: int
+    received_at_ms: int  # Local clock receipt timestamp
 
 
 @dataclass(frozen=True)
@@ -58,15 +62,28 @@ class ReferenceFeatures:
 
     source: str
     current_price: float
-    timestamp_ms: int
-    age_ms: int
+    source_event_timestamp_ms: int
+    received_at_ms: int
+    receipt_age_ms: int
+    source_age_ms: int
     anchor_price: float | None
     anchor_source: str | None
+    anchor_source_timestamp_ms: int | None
+    anchor_received_timestamp_ms: int | None
     distance_to_anchor_bps: float | None
     return_10s_bps: float | None
     return_30s_bps: float | None
     return_60s_bps: float | None
     since_round_open_bps: float | None
+
+    # Backward compatibility properties
+    @property
+    def timestamp_ms(self) -> int:
+        return self.source_event_timestamp_ms
+
+    @property
+    def age_ms(self) -> int:
+        return self.receipt_age_ms
 
     @property
     def price_to_beat(self) -> float | None:
@@ -82,12 +99,11 @@ class ReferenceFeatures:
 
     @property
     def data_age_ms(self) -> int:
-        return self.age_ms
+        return self.receipt_age_ms
 
     @property
     def opening_anchor_detected(self) -> bool:
         return self.anchor_price is not None
-
 
 
 class ChainlinkReferenceFeed:
@@ -123,16 +139,16 @@ class ChainlinkReferenceFeed:
         """Validate and add a single price tick. Returns True if accepted."""
         now = received_at_ms if received_at_ms is not None else (now_ms if now_ms is not None else int(time.time() * 1000))
 
-        # Invariant 1: Reject future timestamps with clock skew buffer (2000ms)
+        # Invariant: Reject future timestamps with clock skew buffer (2000ms)
         if timestamp_ms > now + 2000:
             logger.debug(f"Rejected future tick: ts={timestamp_ms} > now={now}+2000")
             return False
 
-        # Invariant 2: Reject ancient ticks
+        # Invariant: Reject ancient ticks
         if timestamp_ms < now - self.max_history_ms:
             return False
 
-        # Invariant 3: Price must be strictly positive
+        # Invariant: Price must be strictly positive
         if price <= 0.0 or not isinstance(price, (int, float)):
             return False
 
@@ -153,7 +169,7 @@ class ChainlinkReferenceFeed:
         else:
             self._ticks.append(tick)
 
-        # Maintain sort order by timestamp
+        # Maintain sort order by source timestamp
         self._ticks.sort(key=lambda t: t.timestamp_ms)
 
         # Prune older than 30m and limit length
@@ -162,24 +178,24 @@ class ChainlinkReferenceFeed:
         return True
 
     def ingest_rtds_payload(self, raw_data: dict[str, Any], now_ms: int | None = None) -> int:
-        """Ingest a parsed message frame from the Polymarket RTDS feed."""
+        """Ingest a parsed message frame from the Polymarket RTDS feed.
+
+        Requirement A5: Reject ambiguous/generic topics. Only known, explicitly
+        mapped topics may become SOURCE_TWAP_60S.
+        """
         now = now_ms if now_ms is not None else int(time.time() * 1000)
-        topic = raw_data.get("topic")
+        topic = str(raw_data.get("topic", "")).strip()
 
-        # Map topic to source
-        source = TOPIC_TO_SOURCE.get(str(topic))
+        # Strict topic mapping: generic 'crypto_prices' is NOT allowed to become 60s TWAP
+        source = TOPIC_TO_SOURCE.get(topic)
+        if not source:
+            return 0
+
         payload = raw_data.get("payload")
-        if not source or not isinstance(payload, dict):
-            # Also handle topic="crypto_prices" where payload contains symbol and data
-            if topic == "crypto_prices" and isinstance(payload, dict):
-                sym = str(payload.get("symbol", "")).lower()
-                if sym != "btc/usd":
-                    return 0
-                source = SOURCE_TWAP_60S  # Default stream for crypto_prices btc/usd
-            else:
-                return 0
+        if not isinstance(payload, dict):
+            return 0
 
-        # Verify symbol
+        # Verify symbol is BTC/USD
         sym = str(payload.get("symbol", "")).lower()
         if sym and sym != "btc/usd":
             return 0
@@ -203,7 +219,7 @@ class ChainlinkReferenceFeed:
                         source=source,
                         timestamp_ms=int(ts),
                         price=float(val),
-                        now_ms=now,
+                        received_at_ms=now,
                     ):
                         added += 1
                 except (ValueError, TypeError):
@@ -212,11 +228,11 @@ class ChainlinkReferenceFeed:
         self.last_message_time_ms = now
         return added
 
-    def find_exact_anchor(self, start_ms: int, source: str = SOURCE_TWAP_60S) -> float | None:
+    def find_exact_anchor(self, start_ms: int, source: str = SOURCE_TWAP_60S) -> ReferenceTick | None:
         """Find the exact observation matching the round boundary timestamp."""
         for t in self._ticks:
             if t.source == source and t.timestamp_ms == start_ms:
-                return t.price
+                return t
         return None
 
     def get_latest_tick(self, source: str = SOURCE_TWAP_60S) -> ReferenceTick | None:
@@ -237,33 +253,49 @@ class ChainlinkReferenceFeed:
         round_start_epoch: int | None = None,
         event_price_to_beat: float | None = None,
     ) -> ReferenceFeatures:
-        """Compute reference price features, momentum returns, and distance to anchor."""
+        """Compute reference price features, momentum returns, and distance to anchor.
+
+        Requirement A6: Maintain strict anchor hierarchy:
+        1. Authoritative Gamma priceToBeat when genuinely present and valid (> 0)
+        2. Exact official 60-second TWAP opening-boundary observation (t.timestamp_ms == round_start_ms)
+        Do NOT approximate the opening anchor with nearest arbitrary tick.
+        """
         now = now_ms if now_ms is not None else int(time.time() * 1000)
         if round_start_epoch is not None and round_start_ms == 0:
             round_start_ms = round_start_epoch * 1000
 
-        # Anchor resolution
+        anchor_source_ts: int | None = None
+        anchor_recv_ts: int | None = None
+
+        # Hierarchy 1: Gamma priceToBeat
         if anchor_price is None and event_price_to_beat is not None and event_price_to_beat > 0:
             anchor_price = event_price_to_beat
             anchor_source = "gamma-metadata"
+            anchor_source_ts = round_start_ms if round_start_ms > 0 else now
+            anchor_recv_ts = now
 
+        # Hierarchy 2: Exact boundary tick (t.timestamp_ms == round_start_ms)
         if anchor_price is None and round_start_ms > 0:
-            # Detect opening anchor tick
-            for t in self._ticks:
-                if t.source == source and abs(t.timestamp_ms - round_start_ms) <= 3000:
-                    anchor_price = t.price
-                    anchor_source = "opening-twap-anchor"
-                    break
+            exact_tick = self.find_exact_anchor(start_ms=round_start_ms, source=source)
+            if exact_tick is not None:
+                anchor_price = exact_tick.price
+                anchor_source = "rtds-twap-60s-exact-boundary"
+                anchor_source_ts = exact_tick.timestamp_ms
+                anchor_recv_ts = exact_tick.received_at_ms
 
         latest = self.get_latest_tick(source=source)
         if not latest:
             return ReferenceFeatures(
                 source=source,
                 current_price=0.0,
-                timestamp_ms=now,
-                age_ms=999999,
+                source_event_timestamp_ms=now,
+                received_at_ms=now,
+                receipt_age_ms=999999,
+                source_age_ms=999999,
                 anchor_price=anchor_price,
                 anchor_source=anchor_source,
+                anchor_source_timestamp_ms=anchor_source_ts,
+                anchor_received_timestamp_ms=anchor_recv_ts,
                 distance_to_anchor_bps=None,
                 return_10s_bps=None,
                 return_30s_bps=None,
@@ -271,7 +303,8 @@ class ChainlinkReferenceFeed:
                 since_round_open_bps=None,
             )
 
-        age = max(0, now - latest.timestamp_ms)
+        receipt_age = max(0, now - latest.received_at_ms)
+        source_age = max(0, now - latest.timestamp_ms)
         curr_p = latest.price
 
         # Distance to anchor in basis points: (curr / anchor - 1.0) * 10000.0
@@ -283,25 +316,27 @@ class ChainlinkReferenceFeed:
 
         # Calculate returns over 10s, 30s, 60s in basis points
         def get_return_bps(seconds: int) -> float | None:
-            target_ts = now - (seconds * 1000)
-            past_ticks = [
-                t for t in self._ticks
-                if t.source == source and t.timestamp_ms <= target_ts
-            ]
-            if not past_ticks:
+            target_ts = latest.timestamp_ms - (seconds * 1000)
+            past_tick: ReferenceTick | None = None
+            for t in reversed(self._ticks):
+                if t.source == source and t.timestamp_ms <= target_ts:
+                    past_tick = t
+                    break
+            if not past_tick or past_tick.price <= 0:
                 return None
-            past = past_ticks[-1]
-            if abs(past.timestamp_ms - target_ts) > 6000 or past.price <= 0.0:
-                return None
-            return round((curr_p / past.price - 1.0) * 10000.0, 2)
+            return round(((curr_p - past_tick.price) / past_tick.price) * 10000.0, 2)
 
         return ReferenceFeatures(
             source=source,
-            current_price=round(curr_p, 4),
-            timestamp_ms=latest.timestamp_ms,
-            age_ms=age,
+            current_price=curr_p,
+            source_event_timestamp_ms=latest.timestamp_ms,
+            received_at_ms=latest.received_at_ms,
+            receipt_age_ms=receipt_age,
+            source_age_ms=source_age,
             anchor_price=anchor_price,
             anchor_source=anchor_source,
+            anchor_source_timestamp_ms=anchor_source_ts,
+            anchor_received_timestamp_ms=anchor_recv_ts,
             distance_to_anchor_bps=dist_bps,
             return_10s_bps=get_return_bps(10),
             return_30s_bps=get_return_bps(30),
@@ -309,83 +344,53 @@ class ChainlinkReferenceFeed:
             since_round_open_bps=since_round_open_bps,
         )
 
-    async def run_listener(self, stop_event: asyncio.Event) -> None:
-        """Asynchronous background WebSocket client connecting to Polymarket RTDS."""
-        import websockets
-
-        retry_count = 0
-        while not stop_event.is_set():
-            try:
-                self.status = "Connecting to RTDS..."
-                async with websockets.connect(self.ws_url, ping_interval=20, ping_timeout=10) as ws:
-                    self.status = "Connected to RTDS"
-                    retry_count = 0
-                    # Subscribe to spot and TWAP streams
-                    sub_msg = {
-                        "action": "subscribe",
-                        "subscriptions": [
-                            {
-                                "topic": "crypto_prices_chainlink",
-                                "type": "*",
-                                "filters": json.dumps({"symbol": "btc/usd"}),
-                            },
-                            {
-                                "topic": "crypto_prices_twap_sixty",
-                                "type": "update",
-                                "filters": json.dumps({"symbol": "btc/usd"}),
-                            },
-                        ],
-                    }
-                    await ws.send(json.dumps(sub_msg))
-
-                    while not stop_event.is_set():
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-                            if not msg:
-                                continue
-                            try:
-                                data = json.loads(msg)
-                                self.ingest_rtds_payload(data)
-                            except Exception:
-                                pass
-                        except asyncio.TimeoutError:
-                            # Send protocol ping if idle
-                            try:
-                                await ws.ping()
-                            except Exception:
-                                break
-
-            except Exception as e:
-                self.status = f"Disconnected: {e}"
-                retry_count += 1
-                backoff = min(15.0, 1.0 * (2 ** min(retry_count, 4)))
-                logger.warning(f"RTDS connection error: {e}. Backing off {backoff:.1f}s...")
-                await asyncio.sleep(backoff)
-
-    def start_background_listener(self) -> Any:
-        """Launch RTDS WebSocket streaming consumer in background daemon thread."""
+    def start_background_listener(self) -> None:
+        """Start non-blocking daemon thread to maintain live RTDS connection."""
         import threading
-
-        self._stop_event = asyncio.Event()
 
         def _worker() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            self._loop = loop
+            self._running = True
+
+            async def _run() -> None:
+                while self._running:
+                    try:
+                        import websockets
+
+                        async with websockets.connect(
+                            self.ws_url,
+                            ping_interval=20,
+                            ping_timeout=10,
+                            close_timeout=5,
+                        ) as ws:
+                            self.status = "Connected"
+                            sub_msg = {
+                                "action": "subscribe",
+                                "topics": [
+                                    "crypto_prices_twap_sixty",
+                                    "crypto_prices_chainlink",
+                                ],
+                            }
+                            await ws.send(json.dumps(sub_msg))
+                            while self._running:
+                                msg = await ws.recv()
+                                try:
+                                    data = json.loads(msg)
+                                    if isinstance(data, dict):
+                                        self.ingest_rtds_payload(data)
+                                except Exception:
+                                    pass
+                    except Exception as e:
+                        self.status = f"Disconnected ({e})"
+                        await asyncio.sleep(3.0)
+
             try:
-                loop.run_until_complete(self.run_listener(self._stop_event))
+                loop.run_until_complete(_run())
+            except Exception:
+                pass
             finally:
                 loop.close()
 
-        thread = threading.Thread(target=_worker, daemon=True, name="rtds_feed")
-        thread.start()
-        return thread
-
-    def stop_background_listener(self) -> None:
-        """Signal background WebSocket consumer to terminate."""
-        if hasattr(self, "_stop_event"):
-            if hasattr(self, "_loop") and self._loop.is_running():
-                self._loop.call_soon_threadsafe(self._stop_event.set)
-            else:
-                self._stop_event.set()
-
+        th = threading.Thread(target=_worker, daemon=True, name="rtds_client")
+        th.start()
