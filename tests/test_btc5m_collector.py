@@ -330,6 +330,8 @@ def test_collector_startup_recovery(tmp_path: Path) -> None:
     mock_lab = MagicMock(spec=BTC5mShadowLab)
     mock_lab.ref_feed = MagicMock(status="connected")
     mock_lab.binance_feed = MagicMock(status="connected")
+    mock_lab.contract_mgr = MagicMock()
+    mock_lab.contract_mgr.discover_round_by_slug.return_value = (r_info, None)
     mock_res = MagicMock(is_resolved=True, resolved_outcome="Up")
     mock_lab.poll_round_resolution.return_value = mock_res
 

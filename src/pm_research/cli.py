@@ -845,6 +845,11 @@ def cmd_btc5m_report(args: argparse.Namespace) -> int:
 
 def cmd_btc5m_collect(args: argparse.Namespace) -> int:
     """Run autonomous prospective BTC 5-minute collector with crash recovery and cost ceiling."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        force=True,
+    )
     db = get_db(args.db)
     target_rounds = getattr(args, "target_valid_rounds", 100) or getattr(args, "rounds", 100)
     cost_ceiling = getattr(args, "cost_ceiling", 10.0)

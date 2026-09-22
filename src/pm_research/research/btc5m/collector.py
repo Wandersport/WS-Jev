@@ -190,13 +190,15 @@ class BTC5mAutonomousCollector:
             if now_epoch > end_epoch + 15:
                 # Round has concluded, attempt official resolution poll
                 try:
-                    official_res = self.lab.poll_round_resolution(
-                        round_info=None,  # Not needed if round_slug provided
-                        poll_interval_sec=2.0,
-                        max_wait_sec=15,
-                    )
-                    if official_res and official_res.is_resolved:
-                        logger.info(f"Successfully recovered and resolved {slug} to {official_res.resolved_outcome}")
+                    r_obj, _ = self.lab.contract_mgr.discover_round_by_slug(slug)
+                    if r_obj is not None:
+                        official_res = self.lab.poll_round_resolution(
+                            round_info=r_obj,
+                            poll_interval_sec=2.0,
+                            max_wait_sec=15,
+                        )
+                        if official_res and official_res.is_resolved:
+                            logger.info(f"Successfully recovered and resolved {slug} to {official_res.resolved_outcome}")
                 except Exception as e:
                     logger.warning(f"Could not resolve recovered round {slug}: {e}")
 
@@ -377,6 +379,7 @@ class BTC5mAutonomousCollector:
                 f"=== Monitoring Round {slug} | Remaining: {round_info.seconds_remaining:.1f}s "
                 f"| Target valid: {valid_rounds}/{self.target_valid_rounds} ==="
             )
+            self.emit_heartbeat()
 
             # Record Binance boundary open midpoint if within tolerance
             self._ensure_round_open_provenance(round_info)
@@ -510,6 +513,7 @@ class BTC5mAutonomousCollector:
                 round_info=round_info,
                 target_horizon_sec=h,
             )
+            self.emit_heartbeat()
 
             if not snapshot.is_valid:
                 logger.info(
