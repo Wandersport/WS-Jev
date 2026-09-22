@@ -162,3 +162,10 @@ class CalibrationEngine:
             by_edge_bucket=by_edge,
             by_risk_state=by_risk,
         )
+
+
+def binary_log_loss(y: float, p: float, eps: float = 1e-6) -> float:
+    """Compute binary cross-entropy loss with boundary clipping."""
+    p_clamped = max(eps, min(1.0 - eps, p))
+    return -(y * math.log(p_clamped) + (1.0 - y) * math.log(1.0 - p_clamped))
+

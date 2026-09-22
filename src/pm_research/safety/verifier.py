@@ -189,21 +189,43 @@ class SafetyVerifier:
                             f"Prohibited class name '{node.name}' in {f.relative_to(self.root_path)}:{node.lineno}"
                         )
 
-        # 6. AST & code check on networking: verify only read-only GET requests with no auth headers
-        checked_rules.append("Rule 6: Network requests restricted to read-only GET with zero authentication headers")
+        # 6. AST & code check on networking: verify Polymarket data is read-only GET with zero auth,
+        # and OpenRouter research POST/Bearer auth is restricted strictly to research/jev_openrouter.py
+        checked_rules.append(
+            "Rule 6: Network requests restricted to read-only GET for market data; authenticated POST restricted strictly to Jev research provider"
+        )
         data_dir = self.root_path / "data"
         if data_dir.exists():
             for f in data_dir.glob("*.py"):
                 content = f.read_text(encoding="utf-8")
-                # Ensure no POST/PUT/PATCH/DELETE method specifications
+                # Ensure no POST/PUT/PATCH/DELETE method specifications in market data
                 for bad_method in ['method="POST"', "method='POST'", 'method="PUT"', "method='PUT'",
                                   'method="PATCH"', "method='PATCH'", 'method="DELETE"', "method='DELETE'"]:
                     if bad_method.lower() in content.lower():
-                        violations.append(f"Prohibited non-GET HTTP method in {f.name}: {bad_method}")
-                # Ensure no auth header keys
+                        violations.append(f"Prohibited non-GET HTTP method in market data adapter {f.name}: {bad_method}")
+                # Ensure no auth header keys in market data
                 for bad_header in ["Authorization", "X-API-KEY", "API_KEY", "Bearer", "PRIVATE-KEY"]:
                     if bad_header.lower() in content.lower():
-                        violations.append(f"Prohibited authentication header '{bad_header}' in {f.name}")
+                        violations.append(f"Prohibited authentication header '{bad_header}' in market data adapter {f.name}")
+
+        # Across all files in src/pm_research:
+        # Prohibit POST, Authorization headers, and OPENROUTER_API_KEY outside of research/jev_openrouter.py
+        for f in py_files:
+            rel_path = str(f.relative_to(self.root_path))
+            if rel_path != "research/jev_openrouter.py":
+                content = f.read_text(encoding="utf-8")
+                if '"Authorization"' in content or "'Authorization'" in content:
+                    violations.append(
+                        f"Prohibited Authorization header outside of dedicated Jev research provider in {rel_path}"
+                    )
+                if 'method="POST"' in content or "method='POST'" in content:
+                    violations.append(
+                        f"Prohibited HTTP POST method outside of dedicated Jev research provider in {rel_path}"
+                    )
+                if "OPENROUTER_API_KEY" in content:
+                    violations.append(
+                        f"Prohibited OPENROUTER_API_KEY access outside of dedicated Jev research provider in {rel_path}"
+                    )
 
         # 7. Check CLI options: verify no --live, --real, or live switching flags
         checked_rules.append("Rule 7: No --live, --real, or live-switching CLI options")

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import threading
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Generator
 
@@ -22,6 +23,11 @@ from pm_research.domain.models import (
     RiskState,
     Side,
     TradeProposal,
+)
+from pm_research.research.jev_openrouter import (
+    JevCaptureRecord,
+    JevForecast,
+    JevResolutionScore,
 )
 from pm_research.utils import parse_iso_utc, to_iso_utc
 
@@ -138,6 +144,9 @@ class Database:
                 DELETE FROM research_features;
                 DELETE FROM market_snapshots;
                 DELETE FROM cycles;
+                DELETE FROM jev_resolution_scores;
+                DELETE FROM jev_forecasts;
+                DELETE FROM jev_captures;
                 """
             )
 
@@ -328,6 +337,70 @@ class Database:
                     result_json TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS jev_captures (
+                    capture_id TEXT PRIMARY KEY,
+                    market_id TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    market_question TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    resolution_time TEXT,
+                    market_prob REAL NOT NULL,
+                    ilsa_prob REAL NOT NULL,
+                    jev_blind_prob REAL,
+                    jev_market_aware_prob REAL,
+                    resolved_outcome TEXT,
+                    resolved_at TEXT,
+                    metadata_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS jev_forecasts (
+                    forecast_id TEXT PRIMARY KEY,
+                    capture_id TEXT NOT NULL,
+                    market_id TEXT NOT NULL,
+                    condition TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    model_returned TEXT NOT NULL,
+                    schema_version TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    captured_at TEXT NOT NULL,
+                    market_question TEXT NOT NULL,
+                    resolution_criteria TEXT,
+                    market_resolution_time TEXT,
+                    jev_yes_probability REAL NOT NULL,
+                    jev_no_probability REAL NOT NULL,
+                    jev_choice TEXT NOT NULL,
+                    confidence REAL,
+                    input_tokens INTEGER,
+                    output_tokens INTEGER,
+                    cost REAL,
+                    raw_response_hash TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    UNIQUE(market_id, captured_at, model_id, condition, schema_version)
+                );
+
+                CREATE TABLE IF NOT EXISTS jev_resolution_scores (
+                    score_id TEXT PRIMARY KEY,
+                    capture_id TEXT NOT NULL,
+                    market_id TEXT NOT NULL,
+                    resolved_outcome TEXT NOT NULL,
+                    resolved_at TEXT NOT NULL,
+                    scored_at TEXT NOT NULL,
+                    market_prob REAL NOT NULL,
+                    ilsa_prob REAL NOT NULL,
+                    jev_blind_prob REAL,
+                    jev_market_aware_prob REAL,
+                    market_brier REAL NOT NULL,
+                    ilsa_brier REAL NOT NULL,
+                    jev_blind_brier REAL,
+                    jev_market_aware_brier REAL,
+                    market_log_loss REAL NOT NULL,
+                    ilsa_log_loss REAL NOT NULL,
+                    jev_blind_log_loss REAL,
+                    jev_market_aware_log_loss REAL,
+                    metadata_json TEXT NOT NULL,
+                    UNIQUE(capture_id)
+                );
+
                 -- Indexes for fast query and integrity verification
                 CREATE INDEX IF NOT EXISTS idx_snapshots_market ON market_snapshots(market_id);
                 CREATE INDEX IF NOT EXISTS idx_estimates_market ON probability_estimates(market_id);
@@ -336,6 +409,10 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_calib_model ON calibration_observations(model_version);
                 CREATE INDEX IF NOT EXISTS idx_decisions_accepted ON risk_decisions(accepted);
                 CREATE INDEX IF NOT EXISTS idx_replay_dataset ON replay_runs(dataset_id);
+                CREATE INDEX IF NOT EXISTS idx_jev_captures_market ON jev_captures(market_id);
+                CREATE INDEX IF NOT EXISTS idx_jev_forecasts_capture ON jev_forecasts(capture_id);
+                CREATE INDEX IF NOT EXISTS idx_jev_forecasts_market ON jev_forecasts(market_id);
+                CREATE INDEX IF NOT EXISTS idx_jev_scores_market ON jev_resolution_scores(market_id);
                 """
             )
 
@@ -849,3 +926,334 @@ class Database:
         with self._get_connection() as conn:
             rows = conn.execute("SELECT replay_id, dataset_id, created_at FROM replay_runs ORDER BY created_at DESC").fetchall()
             return [dict(r) for r in rows]
+
+    def save_jev_capture(
+        self,
+        capture: JevCaptureRecord,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist or update a prospective Jev capture uniting market, Ilsa, and Jev forecasts."""
+        sql = """
+            INSERT OR REPLACE INTO jev_captures (
+                capture_id, market_id, captured_at, market_question, category,
+                resolution_time, market_prob, ilsa_prob, jev_blind_prob,
+                jev_market_aware_prob, resolved_outcome, resolved_at, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            capture.capture_id,
+            capture.market_id,
+            to_iso_utc(capture.captured_at),
+            capture.market_question,
+            capture.category,
+            to_iso_utc(capture.resolution_time) if capture.resolution_time else None,
+            capture.market_prob,
+            capture.ilsa_prob,
+            capture.jev_blind_prob,
+            capture.jev_market_aware_prob,
+            capture.resolved_outcome,
+            to_iso_utc(capture.resolved_at) if capture.resolved_at else None,
+            json.dumps(capture.metadata),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def save_jev_forecast(
+        self,
+        forecast: JevForecast,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist an immutable JevForecast record."""
+        sql = """
+            INSERT OR REPLACE INTO jev_forecasts (
+                forecast_id, capture_id, market_id, condition, model_id,
+                model_returned, schema_version, request_hash, captured_at,
+                market_question, resolution_criteria, market_resolution_time,
+                jev_yes_probability, jev_no_probability, jev_choice,
+                confidence, input_tokens, output_tokens, cost,
+                raw_response_hash, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            forecast.forecast_id,
+            forecast.capture_id,
+            forecast.market_id,
+            forecast.condition,
+            forecast.model_id,
+            forecast.model_returned,
+            forecast.schema_version,
+            forecast.request_hash,
+            to_iso_utc(forecast.captured_at_utc),
+            forecast.market_question,
+            forecast.resolution_criteria,
+            to_iso_utc(forecast.market_resolution_time) if forecast.market_resolution_time else None,
+            forecast.jev_yes_probability,
+            forecast.jev_no_probability,
+            forecast.jev_choice,
+            forecast.confidence,
+            forecast.input_tokens,
+            forecast.output_tokens,
+            forecast.cost,
+            forecast.raw_response_hash,
+            json.dumps(forecast.metadata),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_jev_captures(self, limit: int = 100) -> list[JevCaptureRecord]:
+        """Retrieve recent prospective Jev capture records."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jev_captures ORDER BY captured_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            captures: list[JevCaptureRecord] = []
+            for r in rows:
+                captures.append(
+                    JevCaptureRecord(
+                        capture_id=r["capture_id"],
+                        market_id=r["market_id"],
+                        captured_at=parse_iso_utc(r["captured_at"]),
+                        market_question=r["market_question"],
+                        category=r["category"],
+                        resolution_time=(
+                            parse_iso_utc(r["resolution_time"])
+                            if r["resolution_time"]
+                            else None
+                        ),
+                        market_prob=float(r["market_prob"]),
+                        ilsa_prob=float(r["ilsa_prob"]),
+                        jev_blind_prob=(
+                            float(r["jev_blind_prob"])
+                            if r["jev_blind_prob"] is not None
+                            else None
+                        ),
+                        jev_market_aware_prob=(
+                            float(r["jev_market_aware_prob"])
+                            if r["jev_market_aware_prob"] is not None
+                            else None
+                        ),
+                        resolved_outcome=r["resolved_outcome"],
+                        resolved_at=(
+                            parse_iso_utc(r["resolved_at"])
+                            if r["resolved_at"]
+                            else None
+                        ),
+                        metadata=json.loads(r["metadata_json"]),
+                    )
+                )
+            return captures
+
+    def get_jev_forecasts(
+        self,
+        capture_id: str | None = None,
+        market_id: str | None = None,
+    ) -> list[JevForecast]:
+        """Retrieve JevForecast records with optional filtering."""
+        with self._get_connection() as conn:
+            query = "SELECT * FROM jev_forecasts WHERE 1=1"
+            params: list[Any] = []
+            if capture_id:
+                query += " AND capture_id = ?"
+                params.append(capture_id)
+            if market_id:
+                query += " AND market_id = ?"
+                params.append(market_id)
+            query += " ORDER BY captured_at DESC"
+            rows = conn.execute(query, params).fetchall()
+            forecasts: list[JevForecast] = []
+            for r in rows:
+                forecasts.append(
+                    JevForecast(
+                        forecast_id=r["forecast_id"],
+                        capture_id=r["capture_id"],
+                        market_id=r["market_id"],
+                        condition=r["condition"],
+                        model_id=r["model_id"],
+                        model_returned=r["model_returned"],
+                        schema_version=r["schema_version"],
+                        request_hash=r["request_hash"],
+                        captured_at_utc=parse_iso_utc(r["captured_at"]),
+                        market_question=r["market_question"],
+                        resolution_criteria=r["resolution_criteria"],
+                        market_resolution_time=(
+                            parse_iso_utc(r["market_resolution_time"])
+                            if r["market_resolution_time"]
+                            else None
+                        ),
+                        jev_yes_probability=float(r["jev_yes_probability"]),
+                        jev_no_probability=float(r["jev_no_probability"]),
+                        jev_choice=r["jev_choice"],
+                        confidence=(
+                            float(r["confidence"])
+                            if r["confidence"] is not None
+                            else None
+                        ),
+                        input_tokens=int(r["input_tokens"]),
+                        output_tokens=int(r["output_tokens"]),
+                        cost=float(r["cost"]) if r["cost"] is not None else None,
+                        raw_response_hash=r["raw_response_hash"],
+                        metadata=json.loads(r["metadata_json"]),
+                    )
+                )
+            return forecasts
+
+    def get_unresolved_jev_captures(self) -> list[JevCaptureRecord]:
+        """Retrieve prospective captures awaiting market resolution."""
+        with self._get_connection() as conn:
+            rows = conn.execute(
+                "SELECT * FROM jev_captures WHERE resolved_outcome IS NULL ORDER BY captured_at ASC"
+            ).fetchall()
+            captures: list[JevCaptureRecord] = []
+            for r in rows:
+                captures.append(
+                    JevCaptureRecord(
+                        capture_id=r["capture_id"],
+                        market_id=r["market_id"],
+                        captured_at=parse_iso_utc(r["captured_at"]),
+                        market_question=r["market_question"],
+                        category=r["category"],
+                        resolution_time=(
+                            parse_iso_utc(r["resolution_time"])
+                            if r["resolution_time"]
+                            else None
+                        ),
+                        market_prob=float(r["market_prob"]),
+                        ilsa_prob=float(r["ilsa_prob"]),
+                        jev_blind_prob=(
+                            float(r["jev_blind_prob"])
+                            if r["jev_blind_prob"] is not None
+                            else None
+                        ),
+                        jev_market_aware_prob=(
+                            float(r["jev_market_aware_prob"])
+                            if r["jev_market_aware_prob"] is not None
+                            else None
+                        ),
+                        resolved_outcome=None,
+                        resolved_at=None,
+                        metadata=json.loads(r["metadata_json"]),
+                    )
+                )
+            return captures
+
+    def update_jev_capture_resolution(
+        self,
+        capture_id: str,
+        resolved_outcome: str,
+        resolved_at: datetime | str,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Record the actual resolution for a prospective capture."""
+        res_at_str = to_iso_utc(resolved_at) if isinstance(resolved_at, datetime) else str(resolved_at)
+        sql = "UPDATE jev_captures SET resolved_outcome = ?, resolved_at = ? WHERE capture_id = ?"
+        params = (resolved_outcome, res_at_str, capture_id)
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def save_jev_resolution_score(
+        self,
+        score: JevResolutionScore,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist resolution score evaluation comparing forecasters against ground truth."""
+        sql = """
+            INSERT OR REPLACE INTO jev_resolution_scores (
+                score_id, capture_id, market_id, resolved_outcome, resolved_at,
+                scored_at, market_prob, ilsa_prob, jev_blind_prob, jev_market_aware_prob,
+                market_brier, ilsa_brier, jev_blind_brier, jev_market_aware_brier,
+                market_log_loss, ilsa_log_loss, jev_blind_log_loss,
+                jev_market_aware_log_loss, metadata_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            score.score_id,
+            score.capture_id,
+            score.market_id,
+            score.resolved_outcome,
+            to_iso_utc(score.resolved_at),
+            to_iso_utc(score.scored_at),
+            score.market_prob,
+            score.ilsa_prob,
+            score.jev_blind_prob,
+            score.jev_market_aware_prob,
+            score.market_brier,
+            score.ilsa_brier,
+            score.jev_blind_brier,
+            score.jev_market_aware_brier,
+            score.market_log_loss,
+            score.ilsa_log_loss,
+            score.jev_blind_log_loss,
+            score.jev_market_aware_log_loss,
+            json.dumps(score.metadata),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_jev_resolution_scores(self) -> list[JevResolutionScore]:
+        """Retrieve all evaluated prospective Jev resolution scores."""
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT * FROM jev_resolution_scores ORDER BY scored_at DESC").fetchall()
+            scores: list[JevResolutionScore] = []
+            for r in rows:
+                scores.append(
+                    JevResolutionScore(
+                        score_id=r["score_id"],
+                        capture_id=r["capture_id"],
+                        market_id=r["market_id"],
+                        resolved_outcome=r["resolved_outcome"],
+                        resolved_at=parse_iso_utc(r["resolved_at"]),
+                        scored_at=parse_iso_utc(r["scored_at"]),
+                        market_prob=float(r["market_prob"]),
+                        ilsa_prob=float(r["ilsa_prob"]),
+                        jev_blind_prob=(
+                            float(r["jev_blind_prob"])
+                            if r["jev_blind_prob"] is not None
+                            else None
+                        ),
+                        jev_market_aware_prob=(
+                            float(r["jev_market_aware_prob"])
+                            if r["jev_market_aware_prob"] is not None
+                            else None
+                        ),
+                        market_brier=float(r["market_brier"]),
+                        ilsa_brier=float(r["ilsa_brier"]),
+                        jev_blind_brier=(
+                            float(r["jev_blind_brier"])
+                            if r["jev_blind_brier"] is not None
+                            else None
+                        ),
+                        jev_market_aware_brier=(
+                            float(r["jev_market_aware_brier"])
+                            if r["jev_market_aware_brier"] is not None
+                            else None
+                        ),
+                        market_log_loss=float(r["market_log_loss"]),
+                        ilsa_log_loss=float(r["ilsa_log_loss"]),
+                        jev_blind_log_loss=(
+                            float(r["jev_blind_log_loss"])
+                            if r["jev_blind_log_loss"] is not None
+                            else None
+                        ),
+                        jev_market_aware_log_loss=(
+                            float(r["jev_market_aware_log_loss"])
+                            if r["jev_market_aware_log_loss"] is not None
+                            else None
+                        ),
+                        metadata=json.loads(r["metadata_json"]),
+                    )
+                )
+            return scores
+

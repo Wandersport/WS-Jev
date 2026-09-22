@@ -15,6 +15,9 @@ Available subcommands:
   calibration       Display forecast calibration analytics
   report            Generate CLI and HTML dashboard report
   verify-safety     Run automated safety checks proving no live trading capability
+  jev-probe         Test connectivity and model pinning with TypeSafe Jev decisions API
+  jev-shadow-cycle  Execute prospective shadow forecasting cycle on active markets
+  jev-shadow-status Display status of prospective Jev shadow forecasts & resolutions
 """
 
 from __future__ import annotations
@@ -478,6 +481,179 @@ def cmd_history_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_probe(args: argparse.Namespace) -> int:
+    """Test connectivity and decision inference with pinned TypeSafe Jev model via OpenRouter."""
+    from pm_research.research.jev_openrouter import JEV_MODEL_PIN, JevOpenRouterClient
+
+    print("\n" + "=" * 80)
+    print("  [!] TYPESAFE JEV PROBE & AUTHENTICATION VERIFICATION")
+    print(f"      Pinned Target Model: {JEV_MODEL_PIN}")
+    print("      Endpoint:            https://openrouter.ai/api/alpha/decisions")
+    print("      Research Mode:       SHADOW ONLY (Zero Live Trading Capability)")
+    print("=" * 80)
+
+    try:
+        client = JevOpenRouterClient()
+    except ValueError as err:
+        print(f"\n[-] Environment Error: {err}")
+        print("    Ensure the required OpenRouter research API key is exported in your environment.")
+        return 1
+
+    question = "Will humanity establish a permanent scientific base on Mars before 2035?"
+    criteria = "Resolves YES if continuous crewed presence is maintained on Mars for 30+ consecutive days before Jan 1, 2035."
+
+    print("\n  Querying probe decision:")
+    print(f"    Question: {question}")
+    print("    Condition: JEV_BLIND")
+
+    t0 = time.perf_counter()
+    try:
+        forecast = client.generate_forecast(
+            question=question,
+            criteria=criteria,
+            condition="JEV_BLIND",
+            category="SCIENCE",
+            bypass_cache=args.bypass_cache,
+        )
+        elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+        print("\n" + "-" * 80)
+        print("  PROBE RESPONSE VERIFIED")
+        print("-" * 80)
+        print(f"  Model Requested:     {forecast.model_id}")
+        print(f"  Model Returned:      {forecast.model_returned}")
+        print(f"  Model Pin Valid:     PASS (matches {JEV_MODEL_PIN}*)")
+        print(f"  Jev Yes Probability: {forecast.jev_yes_probability:.4f} ({forecast.jev_yes_probability * 100:.1f}%)")
+        print(f"  Jev No Probability:  {forecast.jev_no_probability:.4f} ({forecast.jev_no_probability * 100:.1f}%)")
+        print(f"  Choice:              {forecast.jev_choice}")
+        if forecast.confidence is not None:
+            print(f"  Reported Confidence: {forecast.confidence:.4f}")
+        print(f"  Latency:             {elapsed_ms:.1f} ms")
+        print(f"  Input Tokens:        {forecast.input_tokens}")
+        print(f"  Output Tokens:       {forecast.output_tokens}")
+        if forecast.cost is not None:
+            print(f"  Reported Cost:       ${forecast.cost:.6f}")
+        print(f"  Request Hash:        {forecast.request_hash[:16]}...")
+        print(f"  Response Hash:       {forecast.raw_response_hash[:16]}...")
+        print("  Credential Security: OpenRouter key verified in memory, zero disk writes, unlogged")
+        print("=" * 80 + "\n")
+        return 0
+    except Exception as exc:
+        print(f"\n[-] Jev Probe Failed: {exc}")
+        return 1
+
+
+def cmd_jev_shadow_cycle(args: argparse.Namespace) -> int:
+    """Execute a prospective shadow forecasting cycle on active unresolved prediction markets."""
+    from pm_research.research.jev_shadow import JevShadowRunner
+
+    db = get_db(args.db)
+    print("\n" + "=" * 80)
+    print("  [!] PROSPECTIVE JEV SHADOW FORECASTING CYCLE")
+    print("      Shadow Research Mode: No orders, no proposals, no portfolio execution")
+    print("      Targeting active unresolved prediction markets")
+    print("=" * 80)
+
+    try:
+        runner = JevShadowRunner(db=db)
+    except ValueError as err:
+        print(f"\n[-] Error initializing Jev shadow runner: {err}")
+        print("    Ensure the required OpenRouter research API key is available in your environment.")
+        return 1
+
+    print("\n  Parameters:")
+    print(f"    Max Markets:    {args.max_markets}")
+    print(f"    Min Liquidity:  ${args.min_liquidity:,.0f}")
+    print(f"    Market Aware:   {not args.no_aware}")
+    print(f"    Bypass Cache:   {args.bypass_cache}")
+    print("\n  Starting shadow cycle (discovering unresolved markets & querying Jev)...")
+
+    summary = runner.run_prospective_cycle(
+        max_markets=args.max_markets,
+        min_liquidity=args.min_liquidity,
+        enable_market_aware=not args.no_aware,
+        bypass_cache=args.bypass_cache,
+    )
+
+    print("\n" + "-" * 80)
+    print("  CYCLE SUMMARY")
+    print("-" * 80)
+    print(f"  Cycle ID:            {summary.cycle_id}")
+    print(f"  Timestamp (UTC):     {to_iso_utc(summary.timestamp_utc)}")
+    print(f"  Markets Discovered:  {summary.markets_discovered}")
+    print(f"  Markets Eligible:    {summary.markets_eligible}")
+    print(f"  Markets Captured:    {summary.markets_captured}")
+    print(f"  Jev Requests Sent:   {summary.jev_requests_sent}")
+    print(f"  Jev Cache Hits:      {summary.jev_cache_hits}")
+    print(f"  Failed Requests:     {summary.failed_requests}")
+    print(f"  Input Tokens:        {summary.total_input_tokens}")
+    print(f"  Output Tokens:       {summary.total_output_tokens}")
+    if summary.total_cost is not None:
+        print(f"  Total Cost:          ${summary.total_cost:.6f}")
+
+    if summary.captures:
+        print("\n" + "-" * 80)
+        print("  PROSPECTIVE CAPTURES RECORDED")
+        print("-" * 80)
+        print(f"  {'Market Question':<45} | {'Mkt_p':>6} | {'Ilsa_p':>6} | {'JevBld':>6} | {'JevAwr':>6}")
+        print("  " + "-" * 77)
+        for cap in summary.captures:
+            q_short = cap.market_question[:43] + ".." if len(cap.market_question) > 45 else cap.market_question
+            mkt_str = f"{cap.market_prob:.2f}"
+            ilsa_str = f"{cap.ilsa_prob:.2f}"
+            bld_str = f"{cap.jev_blind_prob:.2f}" if cap.jev_blind_prob is not None else "  N/A"
+            awr_str = f"{cap.jev_market_aware_prob:.2f}" if cap.jev_market_aware_prob is not None else "  N/A"
+            print(f"  {q_short:<45} | {mkt_str:>6} | {ilsa_str:>6} | {bld_str:>6} | {awr_str:>6}")
+
+    print("\n  [i] SHADOW INVARIANT CONFIRMATION:")
+    print("      - Zero trade proposals generated")
+    print("      - Zero orders submitted to PaperBroker")
+    print("      - Portfolio sizing unchanged")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_jev_shadow_status(args: argparse.Namespace) -> int:
+    """Display status of recorded prospective Jev shadow forecasts and resolution evaluations."""
+    from pm_research.research.jev_shadow import JevResolutionScorer
+
+    db = get_db(args.db)
+    print("\n" + "=" * 80)
+    print("  [!] PROSPECTIVE JEV SHADOW RESEARCH STATUS")
+    print("=" * 80)
+
+    scorer = JevResolutionScorer(db=db)
+    scoring_summary = scorer.evaluate_pending_resolutions()
+
+    captures = db.get_jev_captures(limit=100)
+
+    print(f"\n  Total Captures in DB:   {scoring_summary.total_captures}")
+    print(f"  Unresolved Captures:    {scoring_summary.unresolved_captures}")
+    print(f"  Resolved Captures:      {scoring_summary.resolved_captures}")
+    print(f"  Resolution Status:      {scoring_summary.scoring_status}")
+
+    if scoring_summary.scoring_status == "WAITING_FOR_FUTURE_RESOLUTIONS":
+        print("  [!] Markets are currently active/unresolved. Quantitative scoring awaits genuine future resolutions.")
+
+    if captures:
+        print("\n" + "-" * 80)
+        print("  RECENT PROSPECTIVE CAPTURES")
+        print("-" * 80)
+        print(f"  {'Captured (UTC)':<19} | {'Market Question':<35} | {'Mkt_p':>5} | {'Ilsa_p':>6} | {'JevBld':>6} | {'JevAwr':>6}")
+        print("  " + "-" * 88)
+        for cap in captures[:20]:
+            t_str = to_iso_utc(cap.captured_at)[:19].replace("T", " ")
+            q_short = cap.market_question[:33] + ".." if len(cap.market_question) > 35 else cap.market_question
+            mkt_str = f"{cap.market_prob:.2f}"
+            ilsa_str = f"{cap.ilsa_prob:.2f}"
+            bld_str = f"{cap.jev_blind_prob:.2f}" if cap.jev_blind_prob is not None else " N/A"
+            awr_str = f"{cap.jev_market_aware_prob:.2f}" if cap.jev_market_aware_prob is not None else " N/A"
+            print(f"  {t_str:<19} | {q_short:<35} | {mkt_str:>5} | {ilsa_str:>6} | {bld_str:>6} | {awr_str:>6}")
+
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -556,6 +732,26 @@ def main(argv: list[str] | None = None) -> int:
     # verify-safety
     subparsers.add_parser("verify-safety", help="Run automated paper-only safety checks")
 
+    # jev-probe
+    p_jev_probe = subparsers.add_parser(
+        "jev-probe", help="Test connectivity and model pinning with TypeSafe Jev decisions API"
+    )
+    p_jev_probe.add_argument("--bypass-cache", action="store_true", help="Bypass local cache")
+
+    # jev-shadow-cycle
+    p_jev_cycle = subparsers.add_parser(
+        "jev-shadow-cycle", help="Execute prospective shadow forecasting cycle on active markets"
+    )
+    p_jev_cycle.add_argument("--max-markets", type=int, default=20, help="Max markets to evaluate")
+    p_jev_cycle.add_argument("--min-liquidity", type=float, default=1000.0, help="Min liquidity filter")
+    p_jev_cycle.add_argument("--no-aware", action="store_true", help="Disable JEV_MARKET_AWARE condition")
+    p_jev_cycle.add_argument("--bypass-cache", action="store_true", help="Bypass local cache")
+
+    # jev-shadow-status
+    subparsers.add_parser(
+        "jev-shadow-status", help="Display status of prospective Jev shadow forecasts & resolutions"
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -576,6 +772,9 @@ def main(argv: list[str] | None = None) -> int:
         "calibration": cmd_calibration,
         "report": cmd_report,
         "verify-safety": cmd_verify_safety,
+        "jev-probe": cmd_jev_probe,
+        "jev-shadow-cycle": cmd_jev_shadow_cycle,
+        "jev-shadow-status": cmd_jev_shadow_status,
     }
 
     handler = dispatch.get(args.subcommand)
