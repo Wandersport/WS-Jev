@@ -1,0 +1,15 @@
+{
+  "dataset_id": "synthetic_benchmark_v1",
+  "name": "Deterministic Synthetic Multi-Period Benchmark",
+  "source": "synthetic_generator",
+  "created_at": "2026-01-01T12:00:00.000000Z",
+  "start_time": "2026-01-01T12:00:00.000000Z",
+  "end_time": "2026-01-03T12:00:00.000000Z",
+  "market_count": 4,
+  "snapshot_count": 13,
+  "resolution_count": 2,
+  "schema_version": "1.0.0",
+  "checksum_sha256": "adccc95e0633864e162f3e8a8e10b0dcbff5e8ac3ae3309d1a2423aa8d3ee334",
+  "is_synthetic": true,
+  "notes": "Deterministic benchmark with price trends, spread spikes, liquidity limits, and delayed resolutions."
+}

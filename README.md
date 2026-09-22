@@ -78,7 +78,25 @@ Run a multi-cycle simulation loop:
 uv run pmr run-loop --cycles 3 --interval 1.0
 ```
 
-### 5. Inspect Paper Portfolio & Calibration
+### 5. Historical Replay & Quantitative Backtesting
+
+Run deterministic multi-period simulations with simulated clock and execution latency:
+
+```bash
+# List available datasets and verify checksums
+uv run pmr datasets
+
+# Run replay with 0-second execution latency
+uv run pmr replay --dataset synthetic_benchmark_v1 --latency 0.0
+
+# Run replay with 12-hour latency and export HTML report
+uv run pmr replay --dataset synthetic_benchmark_v1 --latency 43200 --html-out reports/replay_benchmark.html
+
+# Inspect a recorded replay run
+uv run pmr replay-report --replay-id <replay-id>
+```
+
+### 6. Inspect Paper Portfolio & Calibration
 
 Display current portfolio state (virtual cash, equity, drawdown, open positions):
 
@@ -92,7 +110,7 @@ Display forecast calibration metrics (Brier score, log loss, ECE, calibration bi
 uv run pmr calibration
 ```
 
-### 6. Generate Reports & Static Dashboard
+### 7. Generate Reports & Static Dashboard
 
 Generate a terminal summary and an interactive static HTML dashboard:
 
@@ -102,15 +120,15 @@ uv run pmr report --dashboard-out reports/dashboard.html
 
 Open `reports/dashboard.html` in any web browser to view portfolio charts, calibration tables, and execution logs.
 
-### 7. Run Test Suite
+### 8. Run Test Suite
 
-Run the full pytest suite (unit, risk, survival, PaperBroker, portfolio, and integration tests):
+Run the full pytest suite (unit, risk, survival, PaperBroker, replay, latency, and integration tests):
 
 ```bash
 uv run pytest
 ```
 
-### 8. Run Linting and Code Quality Checks
+### 9. Run Linting and Code Quality Checks
 
 ```bash
 uv run ruff check src tests
@@ -123,32 +141,42 @@ uv run ruff check src tests
 ```text
 ├── config/
 │   └── default_config.json        # Reference system parameters
+├── data/
+│   └── datasets/                  # Immutable replay datasets with manifests & SHA256
+│       └── synthetic_benchmark/   # Deterministic multi-period benchmark
 ├── docs/
 │   ├── ARCHITECTURE.md            # Detailed pipeline component breakdown
 │   ├── CALIBRATION.md             # Calibration math: Brier, log loss, ECE
+│   ├── HISTORICAL_REPLAY.md       # Replay engine, simulated clock, & latency models
 │   ├── RESEARCH_NOTES.md          # Market microstructure & research limitations
 │   └── SAFETY.md                  # Non-negotiable paper-only safety policy
 ├── src/
 │   └── pm_research/
 │       ├── calibration/           # Brier score, log loss, ECE, calibration bins
-│       ├── data/                  # Deterministic synthetic generator & public read-only adapter
+│       ├── data/                  # Synthetic fixtures, dataset importer, & public adapter
 │       ├── domain/                # Typed domain models (Market, OrderBook, Proposals, Fills)
 │       ├── execution/             # PaperBroker: sole paper-only execution simulator
 │       ├── pipeline/              # Rigo, Holt, Ilsa, Kett, Bram, and PipelineRunner
 │       ├── portfolio/             # Tess paper portfolio and SurvivalManager state machine
+│       ├── replay/                # Simulated clock, ReplayEngine, models, & reports
 │       ├── reporting/             # CLI report formatter and HTML dashboard generator
 │       ├── safety/                # AST and token safety verifier engine
 │       ├── storage/               # Transactional SQLite audit logging
-│       ├── cli.py                 # CLI entry point (seed-demo, run-once, report, verify-safety)
+│       ├── cli.py                 # CLI entry point (seed-demo, replay, run-once, report)
 │       ├── config.py              # Validated configuration dataclasses
 │       └── utils.py               # Timezone-aware UTC helpers and hashing
 ├── tests/
+│   ├── test_accounting_invariants.py # Strict virtual cash & equity accounting
 │   ├── test_core_integration.py   # Core Rigo -> Ilsa -> Kett -> Bram -> Broker -> Tess
 │   ├── test_full_pipeline_integration.py # Multi-cycle lifecycle & dashboard test
 │   ├── test_paper_broker.py       # Order-book walking & slippage simulation tests
 │   ├── test_portfolio_and_settlement.py # Marking, cash accounting, & settlement
+│   ├── test_replay_dataset.py     # Manifests, SHA256 checksums, & dataset import
+│   ├── test_replay_engine.py      # Replay engine, lookahead isolation, & latency impact
+│   ├── test_replay_reporting.py   # Replay report generation & simulation warnings
 │   ├── test_risk_and_survival.py  # Bram gates, drawdown states, & monotonic risk reduction
 │   ├── test_safety.py             # Verification of zero live trading / zero wallets
+│   ├── test_simulated_clock.py    # Deterministic UTC progression & monotonic time
 │   └── test_units.py              # Math, logit/sigmoid, UTC, and calibration formulas
 ├── pyproject.toml                 # Modern package definition and script mappings
 └── README.md

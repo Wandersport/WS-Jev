@@ -24,10 +24,14 @@ from pm_research.data.public_adapter import PublicMarketDataAdapter
 from pm_research.data.synthetic import get_deterministic_synthetic_markets
 from pm_research.domain.models import Side
 from pm_research.pipeline.runner import PipelineRunner
+from pm_research.replay.dataset import DatasetManager
+from pm_research.replay.engine import ReplayEngine
+from pm_research.replay.models import ReplayConfig
+from pm_research.replay.report import ReplayReportGenerator
 from pm_research.reporting.report import ReportGenerator
 from pm_research.safety.verifier import SafetyVerifier
 from pm_research.storage.db import Database
-from pm_research.utils import parse_iso_utc
+from pm_research.utils import parse_iso_utc, to_iso_utc
 
 
 def get_db(db_path: str | None = None) -> Database:
@@ -238,6 +242,96 @@ def cmd_verify_safety(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Execute a historical replay simulation."""
+    import json
+    sim_db = Database(args.db) if args.db else Database(":memory:")
+    cfg = ReplayConfig(
+        dataset_path=args.dataset,
+        latency_seconds=float(args.latency),
+        initial_bankroll=float(args.bankroll),
+        random_seed=int(args.seed),
+    )
+    engine = ReplayEngine(config=cfg, db=sim_db)
+    result = engine.run()
+
+    # Also persist run record to master database for replay-report retrieval
+    try:
+        master_db = Database("data/pm_research.db")
+        master_db.save_replay_run(
+            replay_id=result.replay_id,
+            dataset_id=result.dataset_id,
+            created_at=to_iso_utc(result.finished_at),
+            config_json=json.dumps({
+                "dataset_path": str(cfg.dataset_path),
+                "latency_seconds": cfg.latency_seconds,
+                "initial_bankroll": cfg.initial_bankroll,
+                "random_seed": cfg.random_seed,
+            }),
+            result_json=json.dumps(result.to_dict()),
+        )
+    except Exception:
+        pass
+
+    report_str = ReplayReportGenerator.format_terminal_report(result)
+    print(report_str)
+
+    if args.html_out:
+        html_p = ReplayReportGenerator.generate_html_report(result, args.html_out)
+        print(f"[+] HTML replay report saved to: {html_p}\n")
+    return 0
+
+
+def cmd_replay_report(args: argparse.Namespace) -> int:
+    """Display or export a previously executed replay run."""
+    import json
+    db = get_db(args.db)
+    run_record = db.get_replay_run(args.replay_id)
+    if not run_record:
+        print(f"[!] Replay run '{args.replay_id}' not found in database.")
+        runs = db.list_replay_runs()
+        if runs:
+            print("Available replay runs:")
+            for r in runs:
+                print(f"  - {r['replay_id']} ({r['dataset_id']} at {r['created_at']})")
+        return 1
+
+    res_dict = json.loads(run_record["result_json"])
+    print(f"\nReplay Run: {run_record['replay_id']} (Dataset: {run_record['dataset_id']})")
+    print(f"Created: {run_record['created_at']}")
+    calib = res_dict.get("calibration", {})
+    port = res_dict.get("portfolio", {})
+    trace = res_dict.get("traceability", {})
+    print(f"Brier Score: {calib.get('brier_score')} | Log Loss: {calib.get('log_loss')} | Bias: {calib.get('forecast_bias')}")
+    print(f"Initial: ${port.get('initial_bankroll')} | Final Equity: ${port.get('final_equity')} | Return: {port.get('simulated_return_pct')}%")
+    print(f"Max Drawdown: {port.get('max_drawdown_pct')}% | Latency: {trace.get('latency_seconds')}s | Fills: {port.get('fills_count')}\n")
+    return 0
+
+
+def cmd_datasets(args: argparse.Namespace) -> int:
+    """List all registered historical replay datasets and verify checksums."""
+    manager = DatasetManager()
+    manifests = manager.list_datasets()
+    print("\n" + "=" * 80)
+    print("  REGISTERED HISTORICAL REPLAY DATASETS")
+    print("=" * 80)
+    if not manifests:
+        print("  No registered datasets found in data/datasets/.")
+        print("=" * 80 + "\n")
+        return 0
+
+    for m in manifests:
+        print(f"  Dataset ID:       {m.dataset_id}")
+        print(f"    Name:           {m.name}")
+        print(f"    Source:         {m.source} (Synthetic: {m.is_synthetic})")
+        print(f"    Time Span:      {to_iso_utc(m.start_time)} to {to_iso_utc(m.end_time)}")
+        print(f"    Markets:        {m.market_count} | Snapshots: {m.snapshot_count} | Resolutions: {m.resolution_count}")
+        print(f"    SHA256:         {m.checksum_sha256[:16]}...{m.checksum_sha256[-8:] if m.checksum_sha256 else ''}")
+        print("  " + "-" * 76)
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -245,7 +339,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Paper-trading-only prediction market quantitative research pipeline.",
         epilog="SIMULATION ONLY - STRUCTURALLY INCAPABLE OF LIVE TRADING.",
     )
-    parser.add_argument("--db", default="data/pm_research.db", help="Path to SQLite database")
+    parser.add_argument("--db", default=None, help="Path to SQLite database (defaults to data/pm_research.db)")
 
     subparsers = parser.add_subparsers(dest="subcommand", help="Available subcommands")
 
@@ -263,6 +357,21 @@ def main(argv: list[str] | None = None) -> int:
     p_loop = subparsers.add_parser("run-loop", help="Execute loop of paper research cycles")
     p_loop.add_argument("--cycles", type=int, default=3, help="Number of cycles to run")
     p_loop.add_argument("--interval", type=float, default=1.0, help="Interval in seconds between cycles")
+
+    # replay
+    p_replay = subparsers.add_parser("replay", help="Execute historical replay simulation")
+    p_replay.add_argument("--dataset", default="synthetic_benchmark_v1", help="Dataset ID or directory path")
+    p_replay.add_argument("--latency", type=float, default=0.0, help="Simulated execution latency in seconds")
+    p_replay.add_argument("--bankroll", type=float, default=1000.0, help="Initial virtual capital")
+    p_replay.add_argument("--seed", type=int, default=42, help="Deterministic random seed")
+    p_replay.add_argument("--html-out", default=None, help="Path for HTML replay report output")
+
+    # replay-report
+    p_rep_report = subparsers.add_parser("replay-report", help="Inspect a recorded historical replay run")
+    p_rep_report.add_argument("--replay-id", required=True, help="Replay ID to inspect")
+
+    # datasets
+    subparsers.add_parser("datasets", help="List registered historical replay datasets")
 
     # portfolio
     subparsers.add_parser("portfolio", help="Show current paper portfolio")
@@ -287,6 +396,9 @@ def main(argv: list[str] | None = None) -> int:
         "seed-demo": cmd_seed_demo,
         "run-once": cmd_run_once,
         "run-loop": cmd_run_loop,
+        "replay": cmd_replay,
+        "replay-report": cmd_replay_report,
+        "datasets": cmd_datasets,
         "portfolio": cmd_portfolio,
         "calibration": cmd_calibration,
         "report": cmd_report,
@@ -302,3 +414,4 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
+

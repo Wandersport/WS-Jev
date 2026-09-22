@@ -37,11 +37,13 @@ class _ConnContext:
         return self.conn
 
     def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        if self.should_close:
-            if exc_type is None:
+        if exc_type is None:
+            if self.conn.in_transaction:
                 self.conn.commit()
-            else:
+        else:
+            if self.conn.in_transaction:
                 self.conn.rollback()
+        if self.should_close:
             self.conn.close()
 
 
@@ -49,12 +51,22 @@ class Database:
     """Transactional SQLite database for paper trading research."""
 
     def __init__(self, db_path: str | Path = "data/pm_research.db") -> None:
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.is_memory = str(db_path) == ":memory:"
+        if self.is_memory:
+            self.db_path = Path(":memory:")
+            self._shared_conn: sqlite3.Connection | None = sqlite3.connect(":memory:", check_same_thread=False)
+            self._shared_conn.row_factory = sqlite3.Row
+            self._shared_conn.execute("PRAGMA foreign_keys = ON")
+        else:
+            self.db_path = Path(db_path)
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._shared_conn = None
         self._local = threading.local()
         self._init_tables()
 
     def _create_connection(self) -> sqlite3.Connection:
+        if self.is_memory and self._shared_conn is not None:
+            return self._shared_conn
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
@@ -62,6 +74,8 @@ class Database:
         return conn
 
     def _get_connection(self) -> _ConnContext:
+        if self.is_memory and self._shared_conn is not None:
+            return _ConnContext(self._shared_conn, should_close=False)
         active = getattr(self._local, "active_conn", None)
         if active is not None:
             return _ConnContext(active, should_close=False)
@@ -74,14 +88,34 @@ class Database:
             yield self._local.active_conn
             return
 
+        if self.is_memory and self._shared_conn is not None:
+            conn = self._shared_conn
+            self._local.active_conn = conn
+            try:
+                if not conn.in_transaction:
+                    conn.execute("BEGIN IMMEDIATE")
+                yield conn
+                if conn.in_transaction:
+                    conn.commit()
+            except Exception:
+                if conn.in_transaction:
+                    conn.rollback()
+                raise
+            finally:
+                self._local.active_conn = None
+            return
+
         conn = self._create_connection()
         self._local.active_conn = conn
         try:
-            conn.execute("BEGIN IMMEDIATE")
+            if not conn.in_transaction:
+                conn.execute("BEGIN IMMEDIATE")
             yield conn
-            conn.commit()
+            if conn.in_transaction:
+                conn.commit()
         except Exception:
-            conn.rollback()
+            if conn.in_transaction:
+                conn.rollback()
             raise
         finally:
             self._local.active_conn = None
@@ -286,6 +320,14 @@ class Database:
                     UNIQUE(estimate_id, market_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS replay_runs (
+                    replay_id TEXT PRIMARY KEY,
+                    dataset_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    config_json TEXT NOT NULL,
+                    result_json TEXT NOT NULL
+                );
+
                 -- Indexes for fast query and integrity verification
                 CREATE INDEX IF NOT EXISTS idx_snapshots_market ON market_snapshots(market_id);
                 CREATE INDEX IF NOT EXISTS idx_estimates_market ON probability_estimates(market_id);
@@ -293,6 +335,7 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_positions_market ON paper_positions(market_id);
                 CREATE INDEX IF NOT EXISTS idx_calib_model ON calibration_observations(model_version);
                 CREATE INDEX IF NOT EXISTS idx_decisions_accepted ON risk_decisions(accepted);
+                CREATE INDEX IF NOT EXISTS idx_replay_dataset ON replay_runs(dataset_id);
                 """
             )
 
@@ -777,3 +820,32 @@ class Database:
                 "last_cycle_id": last_cycle["cycle_id"] if last_cycle else None,
                 "last_cycle_time": last_cycle["started_at"] if last_cycle else None,
             }
+
+    def save_replay_run(
+        self,
+        replay_id: str,
+        dataset_id: str,
+        created_at: str,
+        config_json: str,
+        result_json: str,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        sql = "INSERT OR REPLACE INTO replay_runs (replay_id, dataset_id, created_at, config_json, result_json) VALUES (?, ?, ?, ?, ?)"
+        params = (replay_id, dataset_id, created_at, config_json, result_json)
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_replay_run(self, replay_id: str) -> dict[str, Any] | None:
+        with self._get_connection() as conn:
+            row = conn.execute("SELECT * FROM replay_runs WHERE replay_id = ?", (replay_id,)).fetchone()
+            if not row:
+                return None
+            return dict(row)
+
+    def list_replay_runs(self) -> list[dict[str, Any]]:
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT replay_id, dataset_id, created_at FROM replay_runs ORDER BY created_at DESC").fetchall()
+            return [dict(r) for r in rows]
