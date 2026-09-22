@@ -1,0 +1,38 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.ruff_cache/
+.venv/
+env/
+venv/
+
+# Environment and secrets (must never be committed)
+.env
+.env.*
+*.pem
+*.key
+
+# Local research and simulation databases
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Transient logs, reports, and scratch data
+logs/
+reports/*.html
+reports/generated/
+data/raw/
+data/normalized/
+tmp/
+scratch/
+
+# OS metadata
+.DS_Store
+Thumbs.db

@@ -1,0 +1,44 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pm-research"
+version = "0.1.0"
+description = "Paper-trading-only prediction market quantitative research pipeline (Rigo -> Holt -> Ilsa -> Kett -> Bram -> Tess)"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Quantitative Research Team" }
+]
+dependencies = []
+
+[project.scripts]
+pmr = "pm_research.cli:main"
+pm-research = "pm_research.cli:main"
+rigo = "pm_research.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=7.4.0",
+    "ruff>=0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/pm_research"]
+
+[tool.ruff]
+src = ["src", "tests"]
+include = ["src/**/*.py", "tests/**/*.py"]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_functions = "test_*"
