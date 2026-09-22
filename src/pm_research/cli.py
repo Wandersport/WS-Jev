@@ -698,6 +698,12 @@ def cmd_btc5m_shadow(args: argparse.Namespace) -> int:
         horizons = tuple(int(h.strip()) for h in args.horizons.split(",") if h.strip())
 
     lab = BTC5mShadowLab(db=db, horizons_sec=horizons)
+    try:
+        lab.ref_feed.start_background_listener()
+        lab._ref_listener_started = True
+    except Exception as e:
+        logger.warning(f"Could not start background reference listener: {e}")
+
     rounds_count = max(1, getattr(args, "rounds", 1))
 
     print("\n" + "=" * 80)
@@ -711,7 +717,15 @@ def cmd_btc5m_shadow(args: argparse.Namespace) -> int:
         print(f"\n--- [Round {i+1}/{rounds_count}] Discovering active market... ---")
         try:
             round_info = lab.contract_mgr.discover_active_round()
-            print(f"  Discovered: {round_info.round_slug}")
+            max_h = max(horizons)
+            if round_info.seconds_remaining < max_h + 5:
+                wait_sec = max(0.0, round_info.end_epoch - time.time()) + 2.0
+                print(f"  Current round {round_info.round_slug} has {round_info.seconds_remaining:.1f}s remaining (< {max_h + 5}s required).")
+                print(f"  Waiting {wait_sec:.1f}s for fresh round to guarantee complete point-in-time horizon capture...")
+                time.sleep(wait_sec)
+                round_info = lab.contract_mgr.discover_active_round()
+
+            print(f"  Monitoring: {round_info.round_slug}")
             print(f"  PriceToBeat: {round_info.price_to_beat} (source: {round_info.price_to_beat_source})")
             print(f"  Seconds remaining in round: {round_info.seconds_remaining:.1f}s")
 

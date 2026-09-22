@@ -228,7 +228,7 @@ class BTC5mShadowLab:
         round_info: BTC5mRoundInfo,
         horizons_sec: Sequence[int] | None = None,
         poll_resolution_after: bool = True,
-        max_resolution_wait_sec: int = 180,
+        max_resolution_wait_sec: int = 300,
     ) -> dict[str, Any]:
         """Monitor an active round through its horizons, capture snapshots, and evaluate."""
         horizons = sorted(horizons_sec or self.horizons_sec, reverse=True)
@@ -261,6 +261,12 @@ class BTC5mShadowLab:
             target_time = round_info.end_epoch - h
             now = time.time()
             wait_sec = target_time - now
+
+            if wait_sec < -3.0:
+                logger.warning(
+                    f"Horizon {h}s already elapsed ({wait_sec:.1f}s ago). Skipping to avoid excessive timing drift."
+                )
+                continue
 
             if wait_sec > 0:
                 logger.info(
@@ -310,7 +316,7 @@ class BTC5mShadowLab:
         self,
         round_info: BTC5mRoundInfo,
         poll_interval_sec: float = 10.0,
-        max_wait_sec: int = 180,
+        max_wait_sec: int = 300,
     ) -> BTC5mOfficialResolution | None:
         """Poll the Polymarket Data API until official settlement is available."""
         t0 = time.monotonic()

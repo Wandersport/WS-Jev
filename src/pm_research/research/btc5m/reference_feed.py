@@ -367,9 +367,9 @@ class ChainlinkReferenceFeed:
                             self.status = "Connected"
                             sub_msg = {
                                 "action": "subscribe",
-                                "topics": [
-                                    "crypto_prices_twap_sixty",
-                                    "crypto_prices_chainlink",
+                                "subscriptions": [
+                                    {"topic": "crypto_prices_twap_sixty", "type": "*"},
+                                    {"topic": "crypto_prices_chainlink", "type": "*"},
                                 ],
                             }
                             await ws.send(json.dumps(sub_msg))
