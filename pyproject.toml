@@ -12,7 +12,9 @@ license = { text = "MIT" }
 authors = [
     { name = "Quantitative Research Team" }
 ]
-dependencies = []
+dependencies = [
+    "websockets>=16.1.1",
+]
 
 [project.scripts]
 pmr = "pm_research.cli:main"

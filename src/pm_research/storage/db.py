@@ -24,6 +24,9 @@ from pm_research.domain.models import (
     Side,
     TradeProposal,
 )
+from pm_research.research.btc5m.ablation import BTC5mAblationForecast
+from pm_research.research.btc5m.contract import BTC5mRoundInfo
+from pm_research.research.btc5m.snapshot import BTC5mFeatureSnapshot
 from pm_research.research.jev_openrouter import (
     JevCaptureRecord,
     JevForecast,
@@ -401,6 +404,117 @@ class Database:
                     UNIQUE(capture_id)
                 );
 
+                -- BTC 5-minute prospective research tables
+                CREATE TABLE IF NOT EXISTS btc5m_rounds (
+                    round_slug TEXT PRIMARY KEY,
+                    start_epoch INTEGER NOT NULL,
+                    end_epoch INTEGER NOT NULL,
+                    duration_sec INTEGER NOT NULL,
+                    price_to_beat REAL,
+                    price_to_beat_source TEXT,
+                    up_token_id TEXT,
+                    down_token_id TEXT,
+                    condition_id TEXT,
+                    question TEXT,
+                    discovered_at TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    resolved_outcome TEXT,
+                    resolution_price REAL,
+                    settled_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS btc5m_snapshots (
+                    snapshot_id TEXT PRIMARY KEY,
+                    round_slug TEXT NOT NULL,
+                    target_horizon_sec INTEGER NOT NULL,
+                    captured_at_ms INTEGER NOT NULL,
+                    target_scheduled_ms INTEGER NOT NULL,
+                    timing_deviation_ms INTEGER NOT NULL,
+                    seconds_remaining REAL NOT NULL,
+                    reference_source TEXT NOT NULL,
+                    price_to_beat REAL,
+                    price_to_beat_source TEXT,
+                    current_reference_price REAL NOT NULL,
+                    ref_distance_to_beat_bps REAL,
+                    ref_return_10s_bps REAL,
+                    ref_return_30s_bps REAL,
+                    ref_return_60s_bps REAL,
+                    market_q REAL,
+                    up_best_bid REAL,
+                    up_best_ask REAL,
+                    down_best_bid REAL,
+                    down_best_ask REAL,
+                    poly_spread REAL,
+                    binance_perp_mid REAL,
+                    binance_microprice REAL,
+                    binance_microprice_offset_bps REAL,
+                    binance_top5_depth_imbalance REAL,
+                    binance_top20_depth_imbalance REAL,
+                    binance_spread_bps REAL,
+                    binance_taker_flow_10s_imbalance REAL,
+                    binance_taker_flow_30s_imbalance REAL,
+                    binance_taker_flow_60s_imbalance REAL,
+                    binance_return_10s_bps REAL,
+                    binance_return_30s_bps REAL,
+                    binance_return_60s_bps REAL,
+                    binance_return_since_open_bps REAL,
+                    binance_basis_bps REAL,
+                    is_valid INTEGER NOT NULL,
+                    skip_reason TEXT,
+                    raw_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS btc5m_forecasts (
+                    forecast_id TEXT PRIMARY KEY,
+                    snapshot_id TEXT NOT NULL,
+                    round_slug TEXT NOT NULL,
+                    target_horizon_sec INTEGER NOT NULL,
+                    condition TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    request_hash TEXT NOT NULL,
+                    captured_at_ms INTEGER NOT NULL,
+                    market_q REAL,
+                    jev_up_prob REAL NOT NULL,
+                    jev_down_prob REAL NOT NULL,
+                    jev_choice TEXT NOT NULL,
+                    confidence REAL,
+                    input_tokens INTEGER NOT NULL,
+                    output_tokens INTEGER NOT NULL,
+                    latency_ms INTEGER NOT NULL,
+                    from_cache INTEGER NOT NULL,
+                    raw_response_hash TEXT NOT NULL,
+                    created_at_utc TEXT NOT NULL,
+                    UNIQUE(snapshot_id, condition)
+                );
+
+                CREATE TABLE IF NOT EXISTS btc5m_resolution_scores (
+                    score_id TEXT PRIMARY KEY,
+                    round_slug TEXT NOT NULL,
+                    target_horizon_sec INTEGER NOT NULL,
+                    snapshot_id TEXT NOT NULL,
+                    resolved_outcome TEXT NOT NULL,
+                    resolution_price REAL,
+                    resolved_at TEXT NOT NULL,
+                    scored_at TEXT NOT NULL,
+                    market_q REAL,
+                    market_brier REAL,
+                    market_log_loss REAL,
+                    cond_a_prob REAL,
+                    cond_a_brier REAL,
+                    cond_a_log_loss REAL,
+                    cond_b_prob REAL,
+                    cond_b_brier REAL,
+                    cond_b_log_loss REAL,
+                    cond_c_prob REAL,
+                    cond_c_brier REAL,
+                    cond_c_log_loss REAL,
+                    cond_d_prob REAL,
+                    cond_d_brier REAL,
+                    cond_d_log_loss REAL,
+                    metadata_json TEXT NOT NULL,
+                    UNIQUE(round_slug, target_horizon_sec)
+                );
+
                 -- Indexes for fast query and integrity verification
                 CREATE INDEX IF NOT EXISTS idx_snapshots_market ON market_snapshots(market_id);
                 CREATE INDEX IF NOT EXISTS idx_estimates_market ON probability_estimates(market_id);
@@ -413,6 +527,11 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_jev_forecasts_capture ON jev_forecasts(capture_id);
                 CREATE INDEX IF NOT EXISTS idx_jev_forecasts_market ON jev_forecasts(market_id);
                 CREATE INDEX IF NOT EXISTS idx_jev_scores_market ON jev_resolution_scores(market_id);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_rounds_status ON btc5m_rounds(status);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_snapshots_round ON btc5m_snapshots(round_slug);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_forecasts_round ON btc5m_forecasts(round_slug);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_forecasts_condition ON btc5m_forecasts(condition);
+                CREATE INDEX IF NOT EXISTS idx_btc5m_scores_round ON btc5m_resolution_scores(round_slug);
                 """
             )
 
@@ -1256,4 +1375,332 @@ class Database:
                     )
                 )
             return scores
+
+    # BTC 5-minute prospective lab persistence methods
+    def save_btc5m_round(
+        self,
+        round_info: BTC5mRoundInfo,
+        status: str = "active",
+        resolved_outcome: str | None = None,
+        resolution_price: float | None = None,
+        settled_at: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist or update a discovered BTC 5m round contract."""
+        sql = """
+            INSERT OR REPLACE INTO btc5m_rounds (
+                round_slug, start_epoch, end_epoch, duration_sec, price_to_beat,
+                price_to_beat_source, up_token_id, down_token_id, condition_id,
+                question, discovered_at, status, resolved_outcome, resolution_price, settled_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        now_utc = datetime.now().isoformat()
+        params = (
+            round_info.round_slug,
+            round_info.start_epoch,
+            round_info.end_epoch,
+            round_info.duration_sec,
+            round_info.price_to_beat,
+            round_info.price_to_beat_source,
+            round_info.up_token_id,
+            round_info.down_token_id,
+            round_info.condition_id,
+            round_info.question,
+            now_utc,
+            status,
+            resolved_outcome,
+            resolution_price,
+            settled_at,
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def update_btc5m_round_resolution(
+        self,
+        round_slug: str,
+        resolved_outcome: str,
+        resolution_price: float | None = None,
+        settled_at: str | None = None,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Record the official settlement outcome for a round."""
+        sql = """
+            UPDATE btc5m_rounds
+            SET status = 'resolved', resolved_outcome = ?, resolution_price = ?, settled_at = ?
+            WHERE round_slug = ?
+        """
+        settled_str = settled_at or datetime.now().isoformat()
+        params = (resolved_outcome, resolution_price, settled_str, round_slug)
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_btc5m_rounds(self, status: str | None = None) -> list[dict[str, Any]]:
+        """Retrieve stored BTC 5m rounds, optionally filtered by status."""
+        sql = "SELECT * FROM btc5m_rounds"
+        params: tuple[Any, ...] = ()
+        if status:
+            sql += " WHERE status = ?"
+            params = (status,)
+        sql += " ORDER BY start_epoch DESC"
+
+        with self._get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+
+    def save_btc5m_snapshot(
+        self,
+        snapshot: BTC5mFeatureSnapshot,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist a frozen point-in-time BTC 5m feature snapshot."""
+        sql = """
+            INSERT OR REPLACE INTO btc5m_snapshots (
+                snapshot_id, round_slug, target_horizon_sec, captured_at_ms,
+                target_scheduled_ms, timing_deviation_ms, seconds_remaining,
+                reference_source, price_to_beat, price_to_beat_source,
+                current_reference_price, ref_distance_to_beat_bps, ref_return_10s_bps,
+                ref_return_30s_bps, ref_return_60s_bps, market_q, up_best_bid,
+                up_best_ask, down_best_bid, down_best_ask, poly_spread,
+                binance_perp_mid, binance_microprice, binance_microprice_offset_bps,
+                binance_top5_depth_imbalance, binance_top20_depth_imbalance,
+                binance_spread_bps, binance_taker_flow_10s_imbalance,
+                binance_taker_flow_30s_imbalance, binance_taker_flow_60s_imbalance,
+                binance_return_10s_bps, binance_return_30s_bps, binance_return_60s_bps,
+                binance_return_since_open_bps, binance_basis_bps, is_valid,
+                skip_reason, raw_json
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        """
+        params = (
+            snapshot.snapshot_id,
+            snapshot.round_slug,
+            snapshot.target_horizon_sec,
+            snapshot.captured_at_ms,
+            snapshot.target_scheduled_ms,
+            snapshot.timing_deviation_ms,
+            snapshot.seconds_remaining,
+            snapshot.reference_source,
+            snapshot.price_to_beat,
+            snapshot.price_to_beat_source,
+            snapshot.current_reference_price,
+            snapshot.ref_distance_to_beat_bps,
+            snapshot.ref_return_10s_bps,
+            snapshot.ref_return_30s_bps,
+            snapshot.ref_return_60s_bps,
+            snapshot.market_q,
+            snapshot.up_best_bid,
+            snapshot.up_best_ask,
+            snapshot.down_best_bid,
+            snapshot.down_best_ask,
+            snapshot.poly_spread,
+            snapshot.binance_perp_mid,
+            snapshot.binance_microprice,
+            snapshot.binance_microprice_offset_bps,
+            snapshot.binance_top5_depth_imbalance,
+            snapshot.binance_top20_depth_imbalance,
+            snapshot.binance_spread_bps,
+            snapshot.binance_taker_flow_10s_imbalance,
+            snapshot.binance_taker_flow_30s_imbalance,
+            snapshot.binance_taker_flow_60s_imbalance,
+            snapshot.binance_return_10s_bps,
+            snapshot.binance_return_30s_bps,
+            snapshot.binance_return_60s_bps,
+            snapshot.binance_return_since_open_bps,
+            snapshot.binance_basis_bps,
+            1 if snapshot.is_valid else 0,
+            snapshot.skip_reason,
+            snapshot.to_json(),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_btc5m_snapshots(
+        self,
+        round_slug: str | None = None,
+        valid_only: bool = False,
+    ) -> list[BTC5mFeatureSnapshot]:
+        """Retrieve feature snapshots."""
+        sql = "SELECT raw_json FROM btc5m_snapshots"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if round_slug:
+            clauses.append("round_slug = ?")
+            params.append(round_slug)
+        if valid_only:
+            clauses.append("is_valid = 1")
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY captured_at_ms ASC"
+
+        with self._get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [BTC5mFeatureSnapshot.from_dict(json.loads(r["raw_json"])) for r in rows]
+
+    def save_btc5m_forecast(
+        self,
+        forecast: BTC5mAblationForecast,
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist a single ablation forecast."""
+        sql = """
+            INSERT OR REPLACE INTO btc5m_forecasts (
+                forecast_id, snapshot_id, round_slug, target_horizon_sec,
+                condition, model_id, request_hash, captured_at_ms,
+                market_q, jev_up_prob, jev_down_prob, jev_choice,
+                confidence, input_tokens, output_tokens, latency_ms,
+                from_cache, raw_response_hash, created_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            forecast.forecast_id,
+            forecast.snapshot_id,
+            forecast.round_slug,
+            forecast.target_horizon_sec,
+            forecast.condition,
+            forecast.model_id,
+            forecast.request_hash,
+            forecast.captured_at_ms,
+            forecast.market_q,
+            forecast.jev_up_prob,
+            forecast.jev_down_prob,
+            forecast.jev_choice,
+            forecast.confidence,
+            forecast.input_tokens,
+            forecast.output_tokens,
+            forecast.latency_ms,
+            1 if forecast.from_cache else 0,
+            forecast.raw_response_hash,
+            forecast.created_at_utc,
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_btc5m_forecasts(
+        self,
+        round_slug: str | None = None,
+        condition: str | None = None,
+    ) -> list[BTC5mAblationForecast]:
+        """Retrieve ablation forecasts."""
+        sql = "SELECT * FROM btc5m_forecasts"
+        clauses: list[str] = []
+        params: list[Any] = []
+        if round_slug:
+            clauses.append("round_slug = ?")
+            params.append(round_slug)
+        if condition:
+            clauses.append("condition = ?")
+            params.append(condition)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY captured_at_ms ASC"
+
+        with self._get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [
+                BTC5mAblationForecast(
+                    forecast_id=r["forecast_id"],
+                    snapshot_id=r["snapshot_id"],
+                    round_slug=r["round_slug"],
+                    target_horizon_sec=int(r["target_horizon_sec"]),
+                    condition=r["condition"],
+                    model_id=r["model_id"],
+                    request_hash=r["request_hash"],
+                    captured_at_ms=int(r["captured_at_ms"]),
+                    market_q=float(r["market_q"]) if r["market_q"] is not None else None,
+                    jev_up_prob=float(r["jev_up_prob"]),
+                    jev_down_prob=float(r["jev_down_prob"]),
+                    jev_choice=r["jev_choice"],
+                    confidence=float(r["confidence"]) if r["confidence"] is not None else None,
+                    input_tokens=int(r["input_tokens"]),
+                    output_tokens=int(r["output_tokens"]),
+                    latency_ms=int(r["latency_ms"]),
+                    from_cache=bool(r["from_cache"]),
+                    raw_response_hash=r["raw_response_hash"],
+                    created_at_utc=r["created_at_utc"],
+                )
+                for r in rows
+            ]
+
+    def save_btc5m_resolution_score(
+        self,
+        score: dict[str, Any],
+        conn: sqlite3.Connection | None = None,
+    ) -> None:
+        """Persist comparative score record for a resolved round."""
+        sql = """
+            INSERT OR REPLACE INTO btc5m_resolution_scores (
+                score_id, round_slug, target_horizon_sec, snapshot_id,
+                resolved_outcome, resolution_price, resolved_at, scored_at,
+                market_q, market_brier, market_log_loss,
+                cond_a_prob, cond_a_brier, cond_a_log_loss,
+                cond_b_prob, cond_b_brier, cond_b_log_loss,
+                cond_c_prob, cond_c_brier, cond_c_log_loss,
+                cond_d_prob, cond_d_brier, cond_d_log_loss,
+                metadata_json
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+            )
+        """
+        params = (
+            score["score_id"],
+            score["round_slug"],
+            score["target_horizon_sec"],
+            score["snapshot_id"],
+            score["resolved_outcome"],
+            score.get("resolution_price"),
+            score["resolved_at"],
+            score["scored_at"],
+            score.get("market_q"),
+            score.get("market_brier"),
+            score.get("market_log_loss"),
+            score.get("cond_a_prob"),
+            score.get("cond_a_brier"),
+            score.get("cond_a_log_loss"),
+            score.get("cond_b_prob"),
+            score.get("cond_b_brier"),
+            score.get("cond_b_log_loss"),
+            score.get("cond_c_prob"),
+            score.get("cond_c_brier"),
+            score.get("cond_c_log_loss"),
+            score.get("cond_d_prob"),
+            score.get("cond_d_brier"),
+            score.get("cond_d_log_loss"),
+            json.dumps(score.get("metadata", {})),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def get_btc5m_resolution_scores(
+        self,
+        round_slug: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve evaluated resolution scores."""
+        sql = "SELECT * FROM btc5m_resolution_scores"
+        params: list[Any] = []
+        if round_slug:
+            sql += " WHERE round_slug = ?"
+            params.append(round_slug)
+        sql += " ORDER BY scored_at DESC"
+
+        with self._get_connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+            return [dict(r) for r in rows]
+
 

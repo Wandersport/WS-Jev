@@ -238,6 +238,14 @@ class JevOpenRouterClient:
     ) -> tuple[dict[str, Any], bool, str]:
         """Query Jev decisions API with caching, rate limiting, and exact model validation."""
         payload = self.build_request_payload(state)
+        return self.query_decision_payload(payload, bypass_cache=bypass_cache)
+
+    def query_decision_payload(
+        self,
+        payload: dict[str, Any],
+        bypass_cache: bool = False,
+    ) -> tuple[dict[str, Any], bool, str]:
+        """Execute a structured decision query against OpenRouter API with full validation."""
         req_hash = self.compute_request_hash(payload)
         cache_file = self.cache_dir / f"{req_hash}.json"
 

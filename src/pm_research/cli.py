@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -43,9 +44,13 @@ from pm_research.replay.models import ReplayConfig
 from pm_research.replay.report import ReplayReportGenerator
 from pm_research.reporting.history_report import HistoryReportGenerator
 from pm_research.reporting.report import ReportGenerator
+from pm_research.research.btc5m.lab import BTC5mShadowLab
+from pm_research.research.btc5m.snapshot import STANDARD_HORIZONS_SEC
 from pm_research.safety.verifier import SafetyVerifier
 from pm_research.storage.db import Database
 from pm_research.utils import parse_iso_utc, to_iso_utc
+
+logger = logging.getLogger(__name__)
 
 
 def get_db(db_path: str | None = None) -> Database:
@@ -654,6 +659,156 @@ def cmd_jev_shadow_status(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_btc5m_probe(args: argparse.Namespace) -> int:
+    """Probe public read-only market data feeds and OpenRouter inference connectivity."""
+    db = get_db(args.db)
+    lab = BTC5mShadowLab(db=db)
+    print("\n" + "=" * 80)
+    print("  [!] PROBING BTC 5-MINUTE DATA FEEDS & JEV CONNECTIVITY")
+    print("=" * 80)
+    results = lab.probe_connectivity()
+    print(f"  Polymarket Gamma API (Active Round):  {'PASS' if results['polymarket_gamma'] else 'FAIL'}")
+    print(f"  Polymarket Book:                      {'PASS' if results['polymarket_book'] else 'FAIL'}")
+    print(f"  Binance USD-M Perpetual (FAPI):       {'PASS' if results['binance_perp'] else 'FAIL'}")
+    print(f"  OpenRouter TypeSafe Jev API Key:      {'PASS' if results['openrouter_jev'] else 'FAIL'}")
+    print("\n  Probe Details:")
+    for k, v in results.get("details", {}).items():
+        print(f"    - {k}: {v}")
+    print("=" * 80 + "\n")
+    all_ok = (
+        results["polymarket_gamma"]
+        and results["polymarket_book"]
+        and results["binance_perp"]
+        and results["openrouter_jev"]
+    )
+    return 0 if all_ok else 1
+
+
+def cmd_btc5m_shadow(args: argparse.Namespace) -> int:
+    """Run prospective BTC 5-minute shadow forecasting loop."""
+    db = get_db(args.db)
+    horizons = STANDARD_HORIZONS_SEC
+    if getattr(args, "horizons", None):
+        horizons = tuple(int(h.strip()) for h in args.horizons.split(",") if h.strip())
+
+    lab = BTC5mShadowLab(db=db, horizons_sec=horizons)
+    rounds_count = max(1, getattr(args, "rounds", 1))
+
+    print("\n" + "=" * 80)
+    print("  [!] STARTING BTC 5-MINUTE PROSPECTIVE SHADOW FORECASTING")
+    print(f"  Rounds to monitor:    {rounds_count}")
+    print(f"  Standard horizons:    {horizons}s remaining")
+    print(f"  Settlement polling:   {'ENABLED' if not args.no_poll_resolution else 'DISABLED'}")
+    print("=" * 80)
+
+    for i in range(rounds_count):
+        print(f"\n--- [Round {i+1}/{rounds_count}] Discovering active market... ---")
+        try:
+            round_info = lab.contract_mgr.discover_active_round()
+            print(f"  Discovered: {round_info.round_slug}")
+            print(f"  PriceToBeat: {round_info.price_to_beat} (source: {round_info.price_to_beat_source})")
+            print(f"  Seconds remaining in round: {round_info.seconds_remaining:.1f}s")
+
+            res = lab.monitor_round(
+                round_info=round_info,
+                horizons_sec=horizons,
+                poll_resolution_after=not args.no_poll_resolution,
+            )
+            print(f"  Round {round_info.round_slug} complete:")
+            print(f"    Snapshots captured: {res['snapshots_captured']}")
+            print(f"    Forecasts produced: {res['forecasts_produced']}")
+            if res.get("resolved"):
+                print(f"    Official outcome:   {res.get('outcome')} (price: {res.get('resolution_price')})")
+        except Exception as e:
+            print(f"  [ERROR] Monitoring round failed: {e}")
+            logger.exception("Round monitoring error")
+
+    print("\n" + "=" * 80)
+    print("  [+] BTC 5m prospective shadow run completed.")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_btc5m_status(args: argparse.Namespace) -> int:
+    """Display status of BTC 5-minute research rounds, snapshots, and forecasts."""
+    db = get_db(args.db)
+    print("\n" + "=" * 80)
+    print("  [!] BTC 5-MINUTE PROSPECTIVE RESEARCH STATUS")
+    print("=" * 80)
+
+    rounds = db.get_btc5m_rounds()
+    snapshots = db.get_btc5m_snapshots()
+    forecasts = db.get_btc5m_forecasts()
+    scores = db.get_btc5m_resolution_scores()
+
+    print(f"\n  Total Discovered Rounds: {len(rounds)}")
+    print(f"  Total Snapshots:         {len(snapshots)} ({sum(1 for s in snapshots if s.is_valid)} valid)")
+    print(f"  Total Forecasts:         {len(forecasts)}")
+    print(f"  Evaluated Scores:        {len(scores)}")
+
+    if rounds:
+        print("\n" + "-" * 80)
+        print("  RECENT ROUNDS")
+        print("-" * 80)
+        print(f"  {'Round Slug':<35} | {'PriceToBeat':>11} | {'Status':<9} | {'Outcome':<7}")
+        print("  " + "-" * 75)
+        for r in rounds[:15]:
+            ptb_str = f"{r['price_to_beat']:.2f}" if r.get('price_to_beat') else "N/A"
+            out_str = str(r.get('resolved_outcome') or "PENDING")
+            print(f"  {r['round_slug']:<35} | {ptb_str:>11} | {r['status']:<9} | {out_str:<7}")
+
+    if forecasts:
+        print("\n" + "-" * 80)
+        print("  RECENT FORECASTS")
+        print("-" * 80)
+        print(f"  {'Round':<30} | {'Hz':>4} | {'Condition':<26} | {'Mkt_q':>5} | {'Jev_UP':>6} | {'Choice':<4}")
+        print("  " + "-" * 88)
+        for fc in forecasts[-16:]:
+            mkt_str = f"{fc.market_q:.2f}" if fc.market_q is not None else " N/A"
+            print(f"  {fc.round_slug:<30} | {fc.target_horizon_sec:>3}s | {fc.condition:<26} | {mkt_str:>5} | {fc.jev_up_prob:>6.2f} | {fc.jev_choice:<4}")
+
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_btc5m_report(args: argparse.Namespace) -> int:
+    """Generate comparative ablation evaluation report with clustered bootstrapping."""
+    db = get_db(args.db)
+    lab = BTC5mShadowLab(db=db)
+    summary = lab.compute_evaluation_summary()
+
+    print("\n" + "=" * 80)
+    print("  [!] BTC 5-MINUTE ABLATION FORECASTING BENCHMARK REPORT")
+    print("=" * 80)
+
+    if summary.get("status") == "NO_RESOLVED_DATA":
+        print("\n  [!] No resolved rounds with completed scores found in database.")
+        print("      Run prospective shadow collection ('pmr btc5m-shadow') and allow rounds to settle.")
+        print("=" * 80 + "\n")
+        return 0
+
+    print(f"\n  Total Evaluated Rounds:    {summary['total_rounds']}")
+    print(f"  Total Evaluated Snapshots: {summary['total_scores']}")
+
+    print("\n" + "-" * 80)
+    print("  ABLATION PERFORMANCE SUMMARY (vs Raw Polymarket Consensus)")
+    print("-" * 80)
+    print(f"  {'Condition':<28} | {'N':>4} | {'Brier':>7} | {'MktBrier':>8} | {'DeltaBrier':>10} | {'95% Bootstrap CI':<19}")
+    print("  " + "-" * 86)
+
+    for cond, m in summary.get("metrics_by_condition", {}).items():
+        ci_str = f"[{m['delta_brier_95ci'][0]:+.4f}, {m['delta_brier_95ci'][1]:+.4f}]" if m.get("delta_brier_95ci") else "N/A"
+        delta_str = f"{m['delta_brier']:+.4f}" if m.get('delta_brier') is not None else "N/A"
+        print(f"  {cond:<28} | {m['count']:>4} | {m['mean_brier']:>7.4f} | {m['market_brier']:>8.4f} | {delta_str:>10} | {ci_str:<19}")
+
+    print("\n" + "-" * 80)
+    print("  Notes:")
+    print("  * Delta Brier = Forecaster Brier - Market Brier (negative indicates forecaster outperforms market).")
+    print("  * 95% Bootstrap CI is computed via round-clustered resampling to account for round-level settlement correlation.")
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -752,6 +907,42 @@ def main(argv: list[str] | None = None) -> int:
         "jev-shadow-status", help="Display status of prospective Jev shadow forecasts & resolutions"
     )
 
+    # btc5m-probe
+    subparsers.add_parser(
+        "btc5m-probe", help="Probe BTC 5-minute data feeds and OpenRouter inference connectivity"
+    )
+
+    # btc5m-shadow
+    p_btc5m_shadow = subparsers.add_parser(
+        "btc5m-shadow", help="Run prospective BTC 5-minute shadow forecasting laboratory"
+    )
+    p_btc5m_shadow.add_argument("--rounds", type=int, default=1, help="Number of 5-minute rounds to monitor")
+    p_btc5m_shadow.add_argument(
+        "--horizons",
+        default=None,
+        help="Comma-separated horizon seconds remaining (e.g. '240,180,120,60,30')",
+    )
+    p_btc5m_shadow.add_argument(
+        "--no-poll-resolution",
+        action="store_true",
+        help="Skip polling official Polymarket Data API resolution after round end",
+    )
+    p_btc5m_shadow.add_argument(
+        "--bypass-cache",
+        action="store_true",
+        help="Bypass local cache for Jev decisions",
+    )
+
+    # btc5m-status
+    subparsers.add_parser(
+        "btc5m-status", help="Display status of BTC 5m rounds, snapshots, forecasts, and resolutions"
+    )
+
+    # btc5m-report
+    subparsers.add_parser(
+        "btc5m-report", help="Generate comparative ablation evaluation report with bootstrap CI"
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -775,6 +966,10 @@ def main(argv: list[str] | None = None) -> int:
         "jev-probe": cmd_jev_probe,
         "jev-shadow-cycle": cmd_jev_shadow_cycle,
         "jev-shadow-status": cmd_jev_shadow_status,
+        "btc5m-probe": cmd_btc5m_probe,
+        "btc5m-shadow": cmd_btc5m_shadow,
+        "btc5m-status": cmd_btc5m_status,
+        "btc5m-report": cmd_btc5m_report,
     }
 
     handler = dispatch.get(args.subcommand)
