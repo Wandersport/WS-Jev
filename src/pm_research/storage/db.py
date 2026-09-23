@@ -27,7 +27,10 @@ from pm_research.domain.models import (
 )
 from pm_research.research.btc5m.ablation import BTC5mAblationForecast
 from pm_research.research.btc5m.contract import BTC5mRoundInfo
-from pm_research.research.btc5m.experiment import EXPERIMENT_SPEC_HASH
+from pm_research.research.btc5m.experiment import (
+    EXPERIMENT_ID,
+    EXPERIMENT_SPEC_HASH,
+)
 from pm_research.research.btc5m.snapshot import BTC5mFeatureSnapshot
 from pm_research.research.jev_openrouter import (
     JevCaptureRecord,
@@ -633,7 +636,8 @@ class Database:
                     brier_scores_json TEXT NOT NULL,
                     experiment_spec_hash TEXT NOT NULL,
                     backup_file_path TEXT,
-                    notes TEXT
+                    notes TEXT,
+                    is_canonical INTEGER NOT NULL DEFAULT 1
                 );
 
                 -- Indexes for fast query and integrity verification
@@ -655,6 +659,67 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_btc5m_scores_round ON btc5m_resolution_scores(round_slug);
                 CREATE INDEX IF NOT EXISTS idx_btc5m_heartbeat_time ON btc5m_collector_heartbeat(timestamp_epoch);
                 CREATE INDEX IF NOT EXISTS idx_btc5m_checkpoints_milestone ON btc5m_checkpoints(milestone_rounds);
+                """
+            )
+
+            # Migration: Ensure is_canonical column exists in btc5m_checkpoints
+            cols = [
+                info[1]
+                for info in cursor.execute("PRAGMA table_info(btc5m_checkpoints)").fetchall()
+            ]
+            if "is_canonical" not in cols:
+                cursor.execute(
+                    "ALTER TABLE btc5m_checkpoints ADD COLUMN is_canonical INTEGER NOT NULL DEFAULT 1"
+                )
+
+            # Non-destructively mark historical duplicate checkpoints as legacy (is_canonical = 0)
+            cursor.execute(
+                """
+                SELECT experiment_spec_hash, milestone_rounds, count(*) as cnt
+                FROM btc5m_checkpoints
+                GROUP BY experiment_spec_hash, milestone_rounds
+                HAVING cnt > 1
+                """
+            )
+            dup_milestones = cursor.fetchall()
+            for row in dup_milestones:
+                exp_hash, m_rounds, _ = row
+                cps = cursor.execute(
+                    """
+                    SELECT checkpoint_id, created_at_utc, notes
+                    FROM btc5m_checkpoints
+                    WHERE experiment_spec_hash = ? AND milestone_rounds = ?
+                    ORDER BY created_at_utc ASC
+                    """,
+                    (exp_hash, m_rounds),
+                ).fetchall()
+                if cps:
+                    canonical_id = cps[0][0]
+                    cursor.execute(
+                        "UPDATE btc5m_checkpoints SET is_canonical = 1 WHERE checkpoint_id = ?",
+                        (canonical_id,),
+                    )
+                    for legacy_row in cps[1:]:
+                        legacy_id = legacy_row[0]
+                        existing_notes = legacy_row[2] or ""
+                        if "[LEGACY DUPLICATE" not in existing_notes:
+                            new_notes = f"{existing_notes} [LEGACY DUPLICATE: canonical is {canonical_id}]".strip()
+                            cursor.execute(
+                                "UPDATE btc5m_checkpoints SET is_canonical = 0, notes = ? WHERE checkpoint_id = ?",
+                                (new_notes, legacy_id),
+                            )
+                        else:
+                            cursor.execute(
+                                "UPDATE btc5m_checkpoints SET is_canonical = 0 WHERE checkpoint_id = ?",
+                                (legacy_id,),
+                            )
+
+            # Enforce unique index on canonical checkpoints
+            cursor.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_btc5m_checkpoints_canonical_unique
+                ON btc5m_checkpoints(experiment_spec_hash, milestone_rounds)
+                WHERE is_canonical = 1
                 """
             )
 
@@ -1919,6 +1984,24 @@ class Database:
             row = conn.execute(sql).fetchone()
             return dict(row) if row else None
 
+    def get_checkpoint(
+        self,
+        milestone_rounds: int,
+        experiment_spec_hash: str = EXPERIMENT_SPEC_HASH,
+        canonical_only: bool = True,
+    ) -> dict[str, Any] | None:
+        """Retrieve existing checkpoint for experiment and milestone if one exists."""
+        sql = """
+            SELECT * FROM btc5m_checkpoints
+            WHERE milestone_rounds = ? AND experiment_spec_hash = ?
+        """
+        if canonical_only:
+            sql += " AND is_canonical = 1"
+        sql += " ORDER BY created_at_utc ASC LIMIT 1"
+        with self._get_connection() as conn:
+            row = conn.execute(sql, (milestone_rounds, experiment_spec_hash)).fetchone()
+            return dict(row) if row else None
+
     def save_checkpoint(
         self,
         milestone_rounds: int,
@@ -1932,15 +2015,28 @@ class Database:
         notes: str = "",
         conn: sqlite3.Connection | None = None,
     ) -> str:
-        """Persist a scientific milestone checkpoint (e.g. at 30, 100, 500 rounds)."""
+        """Persist a scientific milestone checkpoint (e.g. at 30, 100, 500 rounds).
+
+        Idempotent: if a canonical checkpoint for (experiment_spec_hash, milestone_rounds)
+        already exists, returns the existing checkpoint_id without creating a duplicate record.
+        """
+        existing = self.get_checkpoint(
+            milestone_rounds=milestone_rounds,
+            experiment_spec_hash=experiment_spec_hash,
+            canonical_only=True,
+        )
+        if existing:
+            return existing["checkpoint_id"]
+
         checkpoint_id = f"checkpoint_{milestone_rounds}r_{int(time.time())}"
         now_utc = datetime.now(timezone.utc).isoformat()
         sql = """
             INSERT INTO btc5m_checkpoints (
                 checkpoint_id, milestone_rounds, created_at_utc, valid_resolved_rounds,
                 total_snapshots, total_forecasts, total_openrouter_cost_usd,
-                brier_scores_json, experiment_spec_hash, backup_file_path, notes
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                brier_scores_json, experiment_spec_hash, backup_file_path, notes,
+                is_canonical
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
         """
         params = (
             checkpoint_id, milestone_rounds, now_utc, valid_resolved_rounds,
@@ -1954,9 +2050,12 @@ class Database:
                 c.execute(sql, params)
         return checkpoint_id
 
-    def get_checkpoints(self) -> list[dict[str, Any]]:
+    def get_checkpoints(self, canonical_only: bool = False) -> list[dict[str, Any]]:
         """Retrieve all milestone checkpoints."""
-        sql = "SELECT * FROM btc5m_checkpoints ORDER BY milestone_rounds ASC"
+        sql = "SELECT * FROM btc5m_checkpoints"
+        if canonical_only:
+            sql += " WHERE is_canonical = 1"
+        sql += " ORDER BY milestone_rounds ASC, created_at_utc ASC"
         with self._get_connection() as conn:
             rows = conn.execute(sql).fetchall()
             return [dict(r) for r in rows]
@@ -2058,6 +2157,116 @@ class Database:
                 "synthetic_formula_a_cost_usd": 0.03282,
                 "synthetic_formula_b_cost_usd": 0.0166,
                 "actual_pilot_openrouter_cost_usd": 0.003586,
+            }
+
+    def get_dataset_audit(self) -> dict[str, Any]:
+        """Audit dataset integrity, snapshot validity rates, score uniqueness, and forecast pairing."""
+        with self._get_connection() as conn:
+            r_discovered = conn.execute("SELECT count(DISTINCT round_slug) FROM btc5m_rounds").fetchone()[0]
+            r_resolved = conn.execute("SELECT count(DISTINCT round_slug) FROM btc5m_rounds WHERE status = 'resolved'").fetchone()[0]
+            r_scored = conn.execute("SELECT count(DISTINCT round_slug) FROM btc5m_resolution_scores").fetchone()[0]
+            r_zero_valid = conn.execute("""
+                SELECT count(DISTINCT round_slug) FROM btc5m_rounds
+                WHERE round_slug NOT IN (SELECT DISTINCT round_slug FROM btc5m_snapshots WHERE is_valid = 1)
+            """).fetchone()[0]
+
+            total_snaps = conn.execute("SELECT count(*) FROM btc5m_snapshots").fetchone()[0]
+            valid_snaps = conn.execute("SELECT count(*) FROM btc5m_snapshots WHERE is_valid = 1").fetchone()[0]
+            invalid_snaps = conn.execute("SELECT count(*) FROM btc5m_snapshots WHERE is_valid = 0").fetchone()[0]
+            valid_rate = (valid_snaps / total_snaps) if total_snaps > 0 else 0.0
+
+            scored_horizons = conn.execute("SELECT count(*) FROM btc5m_resolution_scores").fetchone()[0]
+            dup_scores = conn.execute("""
+                SELECT count(*) FROM (
+                    SELECT round_slug, target_horizon_sec
+                    FROM btc5m_resolution_scores
+                    GROUP BY round_slug, target_horizon_sec
+                    HAVING count(*) > 1
+                )
+            """).fetchone()[0]
+
+            total_fcs = conn.execute("SELECT count(*) FROM btc5m_forecasts").fetchone()[0]
+            valid_fcs = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE is_valid = 1").fetchone()[0]
+            invalid_fcs = conn.execute("SELECT count(*) FROM btc5m_forecasts WHERE is_valid = 0").fetchone()[0]
+
+            # Unpaired score rows: scores where market_brier is NULL or any condition brier is NULL
+            unpaired_scores = conn.execute("""
+                SELECT count(*) FROM btc5m_resolution_scores
+                WHERE market_brier IS NULL
+                   OR cond_a_brier IS NULL
+                   OR cond_b_brier IS NULL
+                   OR cond_c_brier IS NULL
+                   OR cond_d_brier IS NULL
+            """).fetchone()[0]
+
+            # Raw snapshot duplicates/retries per (round_slug, target_horizon_sec)
+            multi_snap_pairs = conn.execute("""
+                SELECT count(*) FROM (
+                    SELECT round_slug, target_horizon_sec
+                    FROM btc5m_snapshots
+                    GROUP BY round_slug, target_horizon_sec
+                    HAVING count(*) > 1
+                )
+            """).fetchone()[0]
+
+            max_snaps_per_rh_row = conn.execute("""
+                SELECT COALESCE(max(cnt), 1) FROM (
+                    SELECT count(*) as cnt
+                    FROM btc5m_snapshots
+                    GROUP BY round_slug, target_horizon_sec
+                )
+            """).fetchone()
+            max_snaps_per_rh = int(max_snaps_per_rh_row[0]) if max_snaps_per_rh_row and max_snaps_per_rh_row[0] else 1
+
+            # Skip reason breakdown
+            skip_rows = conn.execute("""
+                SELECT skip_reason, count(*) FROM btc5m_snapshots
+                WHERE is_valid = 0
+                GROUP BY skip_reason
+                ORDER BY count(*) DESC
+            """).fetchall()
+            skip_breakdown = {r[0]: int(r[1]) for r in skip_rows}
+
+            # Horizon breakdown
+            hz_rows = conn.execute("""
+                SELECT target_horizon_sec,
+                       count(*) as total,
+                       sum(CASE WHEN is_valid = 1 THEN 1 ELSE 0 END) as valid,
+                       sum(CASE WHEN is_valid = 0 THEN 1 ELSE 0 END) as invalid
+                FROM btc5m_snapshots
+                GROUP BY target_horizon_sec
+                ORDER BY target_horizon_sec DESC
+            """).fetchall()
+            horizon_breakdown = {
+                int(r[0]): {
+                    "total": int(r[1]),
+                    "valid": int(r[2]),
+                    "invalid": int(r[3]),
+                }
+                for r in hz_rows
+            }
+
+            return {
+                "experiment_id": EXPERIMENT_ID,
+                "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+                "rounds_discovered": int(r_discovered),
+                "rounds_resolved": int(r_resolved),
+                "rounds_scored": int(r_scored),
+                "rounds_with_zero_valid_snapshots": int(r_zero_valid),
+                "snapshots_total": int(total_snaps),
+                "snapshots_valid": int(valid_snaps),
+                "snapshots_invalid": int(invalid_snaps),
+                "snapshot_valid_rate": round(valid_rate, 4),
+                "scored_round_horizons": int(scored_horizons),
+                "duplicate_score_keys": int(dup_scores),
+                "forecast_rows": int(total_fcs),
+                "valid_forecast_rows": int(valid_fcs),
+                "invalid_forecast_rows": int(invalid_fcs),
+                "unpaired_score_rows": int(unpaired_scores),
+                "raw_multiple_snapshot_pairs": int(multi_snap_pairs),
+                "max_snapshots_per_round_horizon": max_snaps_per_rh,
+                "skip_reason_breakdown": skip_breakdown,
+                "horizon_breakdown": horizon_breakdown,
             }
 
 

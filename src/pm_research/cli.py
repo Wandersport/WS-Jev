@@ -980,14 +980,15 @@ def cmd_btc5m_collector_status(args: argparse.Namespace) -> int:
             print("  No collector activity recorded yet. Start with 'pmr btc5m-collector-start'.")
 
     # Also list checkpoints
-    checkpoints = db.get_checkpoints()
+    checkpoints = db.get_checkpoints(canonical_only=False)
     if checkpoints:
         print("\n" + "-" * 80)
         print("  MILESTONE CHECKPOINTS")
         print("-" * 80)
         for cp in checkpoints:
+            tag = " [LEGACY DUPLICATE]" if not cp.get("is_canonical", 1) else ""
             print(
-                f"  Milestone {cp['milestone_rounds']:>3}r | Created: {cp['created_at_utc']} | "
+                f"  Milestone {cp['milestone_rounds']:>3}r{tag:<20} | Created: {cp['created_at_utc']} | "
                 f"Valid: {cp['valid_resolved_rounds']} | Spend: ${cp['total_openrouter_cost_usd']:.4f}"
             )
 
@@ -1055,6 +1056,56 @@ def cmd_btc5m_backup(args: argparse.Namespace) -> int:
     print(f"  New Backup File: {dest} ({dest.stat().st_size:,} bytes)")
     print(f"  Valid Rounds:    {valid_rounds}")
     print(f"  Total Backups:   {len(backups)}")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_btc5m_audit_dataset(args: argparse.Namespace) -> int:
+    """Audit BTC 5m dataset integrity, snapshot validity rates, score uniqueness, and forecast pairing."""
+    db = get_db(args.db)
+    audit = db.get_dataset_audit()
+
+    print("\n" + "=" * 80)
+    print("  [!] BTC 5-MINUTE DATASET INTEGRITY & FORENSIC AUDIT")
+    print(f"      Experiment ID:   {audit['experiment_id']}")
+    print(f"      Spec Hash:       {audit['experiment_spec_hash']}")
+    print("=" * 80)
+    print("  ROUND STATISTICS:")
+    print(f"    Physical Rounds Discovered:             {audit['rounds_discovered']}")
+    print(f"    Physical Rounds Resolved:               {audit['rounds_resolved']}")
+    print(f"    Physical Rounds With Valid Snapshots:   {audit['rounds_scored']}")
+    print(f"    Physical Rounds With Zero Valid Snaps:  {audit['rounds_with_zero_valid_snapshots']}")
+    print("-" * 80)
+    print("  SNAPSHOT INTEGRITY & YIELD:")
+    print(f"    Total Snapshots:                        {audit['snapshots_total']}")
+    print(f"    Valid Snapshots:                        {audit['snapshots_valid']} ({audit['snapshot_valid_rate'] * 100:.1f}%)")
+    print(f"    Invalid / Skipped Snapshots:            {audit['snapshots_invalid']} ({(1.0 - audit['snapshot_valid_rate']) * 100:.1f}%)")
+    print(f"    Raw Multi-Snapshot (Round, Horizon):    {audit['raw_multiple_snapshot_pairs']}")
+    print(f"    Max Snapshots per (Round, Horizon):     {audit['max_snapshots_per_round_horizon']}")
+    print("-" * 80)
+    print("  SKIP REASONS BREAKDOWN:")
+    for reason, count in audit["skip_reason_breakdown"].items():
+        pct = (count / audit["snapshots_invalid"] * 100) if audit["snapshots_invalid"] > 0 else 0.0
+        print(f"    {reason:<35}: {count:>4} ({pct:>5.1f}%)")
+    print("-" * 80)
+    print("  PER-HORIZON VALIDITY BREAKDOWN:")
+    print(f"    {'Horizon':<10} | {'Total':<8} | {'Valid':<8} | {'Invalid':<8} | {'Valid %':<8}")
+    print("    " + "-" * 50)
+    for hz, stats in sorted(audit["horizon_breakdown"].items(), reverse=True):
+        hz_label = f"{hz}s"
+        t = stats["total"]
+        v = stats["valid"]
+        inv = stats["invalid"]
+        pct = (v / t * 100) if t > 0 else 0.0
+        print(f"    {hz_label:<10} | {t:<8} | {v:<8} | {inv:<8} | {pct:>6.1f}%")
+    print("-" * 80)
+    print("  SCORING & EVALUATION INTEGRITY:")
+    print(f"    Total Scored Round-Horizons:            {audit['scored_round_horizons']}")
+    print(f"    Duplicate Score Keys:                   {audit['duplicate_score_keys']}")
+    print(f"    Total Forecast Rows:                    {audit['forecast_rows']}")
+    print(f"    Valid Forecast Rows:                    {audit['valid_forecast_rows']}")
+    print(f"    Invalid Forecast Rows:                  {audit['invalid_forecast_rows']}")
+    print(f"    Unpaired Score Rows (Market / Cond NA): {audit['unpaired_score_rows']}")
     print("=" * 80 + "\n")
     return 0
 
@@ -1257,6 +1308,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Create immediate transactional SQLite database backup",
     )
 
+    # btc5m-audit-dataset
+    subparsers.add_parser(
+        "btc5m-audit-dataset",
+        help="Audit BTC 5m dataset integrity, snapshot validity rates, score uniqueness, and forecast pairing",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -1290,6 +1347,7 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-collector-stop": cmd_btc5m_collector_stop,
         "btc5m-audit-cost": cmd_btc5m_audit_cost,
         "btc5m-backup": cmd_btc5m_backup,
+        "btc5m-audit-dataset": cmd_btc5m_audit_dataset,
     }
 
     handler = dispatch.get(args.subcommand)

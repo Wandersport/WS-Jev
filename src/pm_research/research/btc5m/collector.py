@@ -222,6 +222,13 @@ class BTC5mAutonomousCollector:
         for m in self.milestones:
             if current_valid >= m:
                 self._checked_milestones.add(m)
+        try:
+            for cp in self.db.get_checkpoints(canonical_only=True):
+                self._checked_milestones.add(cp["milestone_rounds"])
+        except Exception:
+            pass
+        if current_valid >= self.target_valid_rounds:
+            self._checked_milestones.add(self.target_valid_rounds)
 
         logger.info(
             f"Startup recovery complete. Valid resolved rounds: {current_valid}/{self.target_valid_rounds}. "
@@ -234,6 +241,29 @@ class BTC5mAutonomousCollector:
         valid_rounds: int,
     ) -> Path | None:
         """Generate evaluation summary, create DB backup, and write checkpoint artifact."""
+        if milestone in self._checked_milestones:
+            logger.info(
+                f"Milestone {milestone} already triggered in this session. Skipping redundant checkpoint."
+            )
+            return None
+
+        try:
+            existing_cp = self.db.get_checkpoint(
+                milestone_rounds=milestone,
+                experiment_spec_hash=EXPERIMENT_SPEC_HASH,
+                canonical_only=True,
+            )
+            if existing_cp:
+                logger.info(
+                    f"Milestone {milestone} already exists in database ({existing_cp['checkpoint_id']}). "
+                    "Skipping redundant checkpoint."
+                )
+                self._checked_milestones.add(milestone)
+                return None
+        except Exception:
+            pass
+
+        self._checked_milestones.add(milestone)
         logger.info(f"Triggering milestone checkpoint for {milestone} rounds (current: {valid_rounds})...")
 
         # 1. Transactional SQLite backup
@@ -350,10 +380,11 @@ class BTC5mAutonomousCollector:
                         f"Reached target valid resolved rounds ({valid_rounds}/{self.target_valid_rounds})."
                     )
                     self.status = "TARGET_REACHED"
-                    self.trigger_milestone_checkpoint(
-                        milestone=self.target_valid_rounds,
-                        valid_rounds=valid_rounds,
-                    )
+                    if self.target_valid_rounds not in self._checked_milestones:
+                        self.trigger_milestone_checkpoint(
+                            milestone=self.target_valid_rounds,
+                            valid_rounds=valid_rounds,
+                        )
                     self.emit_heartbeat(status="TARGET_REACHED")
                     break
 

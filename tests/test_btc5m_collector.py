@@ -727,3 +727,340 @@ def test_openrouter_cost_deduplication_and_audit(tmp_path: Path) -> None:
     assert audit["remote_requests_charged"] == 1
     assert audit["local_cache_hits_zero_cost"] == 1
     assert abs(audit["canonical_total_reported_cost_usd"] - 0.0010) < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# 7. Phase 7.2 Checkpoint Idempotency & Dataset Audit Tests
+# ---------------------------------------------------------------------------
+
+
+def test_checkpoint_idempotency_and_uniqueness(tmp_path: Path) -> None:
+    """Verify that checkpoint creation is idempotent and DB unique index prevents canonical duplicates."""
+    db = Database(db_path=tmp_path / "test_cp.db")
+
+    # 1. First save creates checkpoint
+    cp_id_1 = db.save_checkpoint(
+        milestone_rounds=100,
+        valid_resolved_rounds=100,
+        total_snapshots=1005,
+        total_forecasts=1332,
+        total_openrouter_cost_usd=0.0497,
+        brier_scores={},
+        experiment_spec_hash=EXPERIMENT_SPEC_HASH,
+        notes="Initial checkpoint",
+    )
+    assert cp_id_1.startswith("checkpoint_100r_")
+
+    # 2. Second save with identical milestone and spec hash returns existing ID idempotently
+    cp_id_2 = db.save_checkpoint(
+        milestone_rounds=100,
+        valid_resolved_rounds=100,
+        total_snapshots=1005,
+        total_forecasts=1332,
+        total_openrouter_cost_usd=0.0497,
+        brier_scores={},
+        experiment_spec_hash=EXPERIMENT_SPEC_HASH,
+        notes="Duplicate call attempt",
+    )
+    assert cp_id_2 == cp_id_1
+
+    # Only 1 canonical checkpoint exists
+    canonical_cps = db.get_checkpoints(canonical_only=True)
+    assert len(canonical_cps) == 1
+    assert canonical_cps[0]["checkpoint_id"] == cp_id_1
+    assert canonical_cps[0]["is_canonical"] == 1
+
+    # 3. Direct raw SQL attempt to insert a second canonical checkpoint violates partial unique index
+    import pytest
+
+    with pytest.raises(sqlite3.IntegrityError):
+        with db._get_connection() as conn:
+            conn.execute(
+                """
+                INSERT INTO btc5m_checkpoints (
+                    checkpoint_id, milestone_rounds, created_at_utc, valid_resolved_rounds,
+                    total_snapshots, total_forecasts, total_openrouter_cost_usd,
+                    brier_scores_json, experiment_spec_hash, backup_file_path, notes,
+                    is_canonical
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    "checkpoint_100r_dup_raw",
+                    100,
+                    "2026-01-01T00:00:00Z",
+                    100,
+                    1005,
+                    1332,
+                    0.05,
+                    "{}",
+                    EXPERIMENT_SPEC_HASH,
+                    None,
+                    "illegal dup",
+                ),
+            )
+
+    # 4. Inserting a non-canonical legacy record (is_canonical=0) succeeds without violating index
+    with db._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO btc5m_checkpoints (
+                checkpoint_id, milestone_rounds, created_at_utc, valid_resolved_rounds,
+                total_snapshots, total_forecasts, total_openrouter_cost_usd,
+                brier_scores_json, experiment_spec_hash, backup_file_path, notes,
+                is_canonical
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+            """,
+            (
+                "checkpoint_100r_legacy",
+                100,
+                "2026-01-01T00:00:05Z",
+                100,
+                1005,
+                1332,
+                0.05,
+                "{}",
+                EXPERIMENT_SPEC_HASH,
+                None,
+                "legacy non-canonical dup",
+            ),
+        )
+
+    # canonical_only=True still returns 1, canonical_only=False returns 2
+    assert len(db.get_checkpoints(canonical_only=True)) == 1
+    assert len(db.get_checkpoints(canonical_only=False)) == 2
+
+
+def test_collector_target_milestone_double_trigger_prevention(tmp_path: Path) -> None:
+    """Verify that collector does not double-trigger milestone checkpoint on loop completion."""
+    db = Database(db_path=tmp_path / "test_collector_guard.db")
+    collector = BTC5mAutonomousCollector(
+        target_valid_rounds=100,
+        cost_ceiling_usd=10.0,
+        db=db,
+    )
+
+    # Mock lab
+    mock_lab = MagicMock()
+    mock_lab.compute_evaluation_summary.return_value = {
+        "status": "VALID",
+        "total_scores": 100,
+        "metrics_by_condition": {},
+    }
+    collector.lab = mock_lab
+
+    # First trigger should create checkpoint and add milestone to _checked_milestones
+    with patch("pm_research.research.btc5m.collector.backup_database") as mock_backup:
+        mock_backup.return_value = tmp_path / "backup_100r.db"
+        cp_path_1 = collector.trigger_milestone_checkpoint(100, valid_rounds=100)
+        assert cp_path_1 is not None
+        assert 100 in collector._checked_milestones
+        assert mock_backup.call_count == 1
+
+        # Second trigger should detect existing milestone and return early without second backup
+        cp_path_2 = collector.trigger_milestone_checkpoint(100, valid_rounds=100)
+        assert cp_path_2 is None
+        assert mock_backup.call_count == 1  # Not called again
+
+
+def test_dataset_audit_metrics(tmp_path: Path) -> None:
+    """Verify get_dataset_audit correctly aggregates rounds, snapshots, skips, horizons, and scores."""
+    db = Database(db_path=tmp_path / "test_audit.db")
+
+    # Insert round via SQL directly
+    with db._get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO btc5m_rounds (
+                round_slug, start_epoch, end_epoch, duration_sec, price_to_beat,
+                price_to_beat_source, up_token_id, down_token_id, up_outcome_index,
+                down_outcome_index, condition_id, question, discovered_at, status,
+                resolved_outcome, resolution_price, settled_at, experiment_spec_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "btc-updown-5m-1700000000", 1700000000, 1700000300, 300, 68000.0,
+                "chainlink", "up_tok", "down_tok", 0, 1, "cond_1",
+                "Will BTC be above 68000?", "2026-01-01T00:00:00Z", "resolved",
+                "UP", 68100.0, "2026-01-01T00:05:05Z", EXPERIMENT_SPEC_HASH,
+            ),
+        )
+
+        # Insert 1 valid snapshot and 1 invalid snapshot
+        conn.execute(
+            """
+            INSERT INTO btc5m_snapshots (
+                snapshot_id, round_slug, target_horizon_sec, captured_at_ms,
+                target_scheduled_ms, timing_deviation_ms, seconds_remaining,
+                reference_source, current_reference_price, is_valid, skip_reason,
+                experiment_spec_hash, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "s_valid", "btc-updown-5m-1700000000", 240, 1700000060000,
+                1700000060000, 0, 240.0,
+                "chainlink", 68000.0, 1, None,
+                EXPERIMENT_SPEC_HASH, "{}",
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO btc5m_snapshots (
+                snapshot_id, round_slug, target_horizon_sec, captured_at_ms,
+                target_scheduled_ms, timing_deviation_ms, seconds_remaining,
+                reference_source, current_reference_price, is_valid, skip_reason,
+                experiment_spec_hash, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "s_invalid", "btc-updown-5m-1700000000", 180, 1700000120000,
+                1700000120000, 0, 180.0,
+                "chainlink", 68000.0, 0, "SKIP_NO_EXACT_ANCHOR",
+                EXPERIMENT_SPEC_HASH, "{}",
+            ),
+        )
+
+    # Insert 1 score row via save_btc5m_resolution_score
+    score_data = {
+        "score_id": "sc_1",
+        "round_slug": "btc-updown-5m-1700000000",
+        "target_horizon_sec": 240,
+        "snapshot_id": "s_valid",
+        "resolved_outcome": "UP",
+        "resolution_price": 68100.0,
+        "resolved_at": "2026-01-01T00:05:05Z",
+        "scored_at": "2026-01-01T00:06:00Z",
+        "market_q": 0.55,
+        "market_brier": 0.2025,
+        "market_log_loss": 0.5978,
+        "market_q_implied": 0.55,
+        "market_implied_brier": 0.2025,
+        "market_implied_log_loss": 0.5978,
+        "cond_a_prob": 0.58,
+        "cond_a_brier": 0.1764,
+        "cond_a_log_loss": 0.5447,
+        "cond_b_prob": 0.57,
+        "cond_b_brier": 0.1849,
+        "cond_b_log_loss": 0.5621,
+        "cond_c_prob": 0.56,
+        "cond_c_brier": 0.1936,
+        "cond_c_log_loss": 0.5798,
+        "cond_d_prob": 0.56,
+        "cond_d_brier": 0.1936,
+        "cond_d_log_loss": 0.5798,
+        "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+        "metadata_json": "{}",
+    }
+    db.save_btc5m_resolution_score(score_data)
+
+    audit = db.get_dataset_audit()
+    assert audit["experiment_id"] == "btc5m_jev_ablation_v1"
+    assert audit["experiment_spec_hash"] == EXPERIMENT_SPEC_HASH
+    assert audit["rounds_discovered"] == 1
+    assert audit["rounds_resolved"] == 1
+    assert audit["rounds_scored"] == 1
+    assert audit["rounds_with_zero_valid_snapshots"] == 0
+    assert audit["snapshots_total"] == 2
+    assert audit["snapshots_valid"] == 1
+    assert audit["snapshots_invalid"] == 1
+    assert audit["snapshot_valid_rate"] == 0.5
+    assert audit["scored_round_horizons"] == 1
+    assert audit["duplicate_score_keys"] == 0
+    assert audit["raw_multiple_snapshot_pairs"] == 0
+    assert audit["max_snapshots_per_round_horizon"] == 1
+    assert audit["skip_reason_breakdown"]["SKIP_NO_EXACT_ANCHOR"] == 1
+    assert audit["horizon_breakdown"][240]["valid"] == 1
+    assert audit["horizon_breakdown"][180]["invalid"] == 1
+
+
+def test_unpaired_market_brier_handling(tmp_path: Path) -> None:
+    """Verify compute_evaluation_summary correctly handles snapshots where market_brier is None."""
+    db = Database(db_path=tmp_path / "test_unpaired.db")
+    lab = BTC5mShadowLab(db=db)
+
+    # Insert 2 score rows:
+    # 1. Normal paired observation
+    # 2. Observation where market orderbook had no bids, so market_brier is None
+    score_paired = {
+        "score_id": "sc_paired",
+        "round_slug": "r1",
+        "target_horizon_sec": 240,
+        "snapshot_id": "s1",
+        "resolved_outcome": "UP",
+        "resolution_price": 68100.0,
+        "resolved_at": "2026-01-01T00:05:05Z",
+        "scored_at": "2026-01-01T00:06:00Z",
+        "market_q": 0.50,
+        "market_brier": 0.2500,
+        "market_log_loss": 0.6931,
+        "market_q_implied": 0.50,
+        "market_implied_brier": 0.2500,
+        "market_implied_log_loss": 0.6931,
+        "cond_a_prob": 0.60,
+        "cond_a_brier": 0.1600,
+        "cond_a_log_loss": 0.5108,
+        "cond_b_prob": 0.60,
+        "cond_b_brier": 0.1600,
+        "cond_b_log_loss": 0.5108,
+        "cond_c_prob": 0.60,
+        "cond_c_brier": 0.1600,
+        "cond_c_log_loss": 0.5108,
+        "cond_d_prob": 0.60,
+        "cond_d_brier": 0.1600,
+        "cond_d_log_loss": 0.5108,
+        "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+        "metadata_json": "{}",
+    }
+    db.save_btc5m_resolution_score(score_paired)
+
+    score_unpaired = {
+        "score_id": "sc_unpaired",
+        "round_slug": "r2",
+        "target_horizon_sec": 120,
+        "snapshot_id": "s2",
+        "resolved_outcome": "UP",
+        "resolution_price": 68200.0,
+        "resolved_at": "2026-01-01T00:10:05Z",
+        "scored_at": "2026-01-01T00:11:00Z",
+        "market_q": None,
+        "market_brier": None,
+        "market_log_loss": None,
+        "market_q_implied": None,
+        "market_implied_brier": None,
+        "market_implied_log_loss": None,
+        "cond_a_prob": 0.70,
+        "cond_a_brier": 0.0900,
+        "cond_a_log_loss": 0.3567,
+        "cond_b_prob": 0.70,
+        "cond_b_brier": 0.0900,
+        "cond_b_log_loss": 0.3567,
+        "cond_c_prob": 0.70,
+        "cond_c_brier": 0.0900,
+        "cond_c_log_loss": 0.3567,
+        "cond_d_prob": 0.70,
+        "cond_d_brier": 0.0900,
+        "cond_d_log_loss": 0.3567,
+        "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+        "metadata_json": "{}",
+    }
+    db.save_btc5m_resolution_score(score_unpaired)
+
+    summary = lab.compute_evaluation_summary(n_boot=10)
+    assert summary["total_scores"] == 2
+    assert summary["total_rounds"] == 2
+
+    # Paired count must strictly be 1 because r2 lacks market_brier
+    for cond in [COND_A_REF_ONLY, COND_B_REF_PERP, COND_C_MARKET_AWARE, COND_D_FULL]:
+        cond_metric = summary["metrics_by_condition"][cond]
+        assert cond_metric["paired_count"] == 1
+        assert cond_metric["market_brier"] == 0.2500
+        assert cond_metric["mean_brier"] == 0.1600
+        assert cond_metric["delta_brier"] == -0.0900
+
+
+def test_experiment_hash_unchanged() -> None:
+    """Ensure the scientific experiment specification hash remains frozen and unaltered."""
+    expected_frozen_hash = "78bad4ab38785772e0e42fd8329111699101e88896cd0dc56fc5204a8c3d085a"
+    assert EXPERIMENT_SPEC_HASH == expected_frozen_hash
+    computed = compute_experiment_spec_hash(CANONICAL_SPEC)
+    assert computed == expected_frozen_hash
+
