@@ -439,11 +439,29 @@ class BTC5mAutonomousCollector:
                 )
                 self.emit_heartbeat()
 
-                # Record Binance boundary open midpoint if within tolerance
-                self._ensure_round_open_provenance(round_info)
+                # Process round horizons under explicit operational error boundary
+                try:
+                    # Record Binance boundary open midpoint if within tolerance
+                    self._ensure_round_open_provenance(round_info)
 
-                # Monitor horizons
-                self._process_round_horizons(round_info)
+                    # Monitor horizons
+                    self._process_round_horizons(round_info)
+                except (AssertionError, SystemExit, KeyboardInterrupt):
+                    raise
+                except Exception as round_err:
+                    err_msg = str(round_err).lower()
+                    if (
+                        "experiment_spec_hash" in err_msg
+                        or "safety" in err_msg
+                        or "disk image is malformed" in err_msg
+                        or "database is locked" in err_msg
+                    ):
+                        raise
+                    logger.error(
+                        f"Operational error processing round {slug}: {round_err}",
+                        exc_info=True,
+                    )
+                    self.emit_heartbeat(notes=f"Round {slug} operational failure: {round_err}")
 
                 if self.is_stop_requested():
                     break

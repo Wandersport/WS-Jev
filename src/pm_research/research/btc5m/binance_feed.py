@@ -91,6 +91,7 @@ class BinancePerpFeed:
     """Manages Binance BTC/USDT perpetual depth and trade history to compute microstructure features."""
 
     def __init__(self, max_trade_history: int = 5000) -> None:
+        self._state_lock: threading.RLock = threading.RLock()
         self._bids: list[tuple[float, float]] = []  # sorted descending by price: (price, qty)
         self._asks: list[tuple[float, float]] = []  # sorted ascending by price: (price, qty)
         self._depth_source_timestamp_ms: int | None = None
@@ -112,7 +113,8 @@ class BinancePerpFeed:
     def record_midpoint(self, source_ts: int | None, recv_ts: int, mid_price: float) -> None:
         """Record an observed midpoint in the circular history buffer."""
         if mid_price > 0:
-            self._midpoint_history.append((source_ts, recv_ts, mid_price))
+            with self._state_lock:
+                self._midpoint_history.append((source_ts, recv_ts, mid_price))
 
     def find_boundary_open_mid(
         self,
@@ -125,14 +127,16 @@ class BinancePerpFeed:
         if an observation exists within +/- tolerance_ms of round_start_ms.
         Returns None if no observation falls within the tolerance window.
         """
-        if not self._midpoint_history:
-            return None
+        with self._state_lock:
+            if not self._midpoint_history:
+                return None
+            midpoint_history = list(self._midpoint_history)
 
         best_obs: tuple[int | None, int, float] | None = None
         best_diff: float = float("inf")
         best_offset: int = 0
 
-        for source_ts, recv_ts, mid in self._midpoint_history:
+        for source_ts, recv_ts, mid in midpoint_history:
             eval_ts = source_ts if source_ts is not None else recv_ts
             diff = abs(eval_ts - round_start_ms)
             if diff < best_diff:
@@ -156,18 +160,20 @@ class BinancePerpFeed:
     ) -> None:
         """Record the observed Binance perpetual midpoint at the round opening boundary."""
         if mid_price > 0:
-            self._recorded_round_opens[round_slug] = (
-                mid_price,
-                timestamp_ms,
-                source_timestamp_ms,
-                offset_ms,
-            )
+            with self._state_lock:
+                self._recorded_round_opens[round_slug] = (
+                    mid_price,
+                    timestamp_ms,
+                    source_timestamp_ms,
+                    offset_ms,
+                )
 
     def get_round_open(
         self, round_slug: str
     ) -> tuple[float, int, int | None, int | None] | None:
         """Retrieve recorded Binance opening mid and provenance for a round."""
-        rec = self._recorded_round_opens.get(round_slug)
+        with self._state_lock:
+            rec = self._recorded_round_opens.get(round_slug)
         if rec is None:
             return None
         if len(rec) == 2:
@@ -182,19 +188,23 @@ class BinancePerpFeed:
         received_at_ms: int | None = None,
     ) -> None:
         """Inject or update depth levels."""
-        self._bids = sorted(bids, key=lambda x: x[0], reverse=True)
-        self._asks = sorted(asks, key=lambda x: x[0])
-        self._depth_source_timestamp_ms = source_timestamp_ms
+        sorted_bids = sorted(bids, key=lambda x: x[0], reverse=True)
+        sorted_asks = sorted(asks, key=lambda x: x[0])
         recv_ms = received_at_ms or int(time.time() * 1000)
-        self._depth_received_at_ms = recv_ms
 
-        # Record midpoint in circular buffer if valid order book
-        if self._bids and self._asks:
-            bb = self._bids[0][0]
-            ba = self._asks[0][0]
-            if bb < ba:
-                mid = (bb + ba) / 2.0
-                self.record_midpoint(source_timestamp_ms, recv_ms, mid)
+        with self._state_lock:
+            self._bids = sorted_bids
+            self._asks = sorted_asks
+            self._depth_source_timestamp_ms = source_timestamp_ms
+            self._depth_received_at_ms = recv_ms
+
+            # Record midpoint in circular buffer if valid order book
+            if sorted_bids and sorted_asks:
+                bb = sorted_bids[0][0]
+                ba = sorted_asks[0][0]
+                if bb < ba:
+                    mid = (bb + ba) / 2.0
+                    self._midpoint_history.append((source_timestamp_ms, recv_ms, mid))
 
     def add_trade(
         self,
@@ -204,23 +214,25 @@ class BinancePerpFeed:
         is_buyer_maker: bool,
     ) -> None:
         """Inject a single executed trade."""
-        self._trades.append((timestamp_ms, price, qty, is_buyer_maker))
+        with self._state_lock:
+            self._trades.append((timestamp_ms, price, qty, is_buyer_maker))
 
     def add_trades(
         self,
         trades: list[tuple[int, float, float, bool]],
     ) -> None:
         """Batch inject trades."""
-        for t in trades:
-            self.add_trade(t[0], t[1], t[2], t[3])
+        with self._state_lock:
+            for t in trades:
+                self._trades.append((t[0], t[1], t[2], t[3]))
 
     def start_background_listener(self) -> None:
         """Start non-blocking daemon thread to maintain live Binance perp WebSocket connection."""
-        if getattr(self, "_running", False):
-            return
-
-        self._running = True
-        self.status = "Connecting..."
+        with self._state_lock:
+            if self._running:
+                return
+            self._running = True
+            self.status = "Connecting..."
 
         def _worker() -> None:
             loop = asyncio.new_event_loop()
@@ -237,7 +249,8 @@ class BinancePerpFeed:
                             ping_timeout=10,
                             close_timeout=5,
                         ) as ws:
-                            self.status = "Connected"
+                            with self._state_lock:
+                                self.status = "Connected"
                             while self._running:
                                 msg = await ws.recv()
                                 now_ms = int(time.time() * 1000)
@@ -260,7 +273,8 @@ class BinancePerpFeed:
                                 except Exception:
                                     continue
                     except Exception as e:
-                        self.status = f"Disconnected ({e})"
+                        with self._state_lock:
+                            self.status = f"Disconnected ({e})"
                         await asyncio.sleep(2.0)
 
             try:
@@ -275,12 +289,14 @@ class BinancePerpFeed:
 
     def stop_background_listener(self) -> None:
         """Stop background WebSocket listener."""
-        self._running = False
-        self.status = "Stopped"
+        with self._state_lock:
+            self._running = False
+            self.status = "Stopped"
 
     def is_connected(self) -> bool:
         """Check if WebSocket stream is currently connected."""
-        return getattr(self, "status", "") == "Connected"
+        with self._state_lock:
+            return self.status == "Connected"
 
     def fetch_rest_snapshot(
         self,
@@ -368,8 +384,12 @@ class BinancePerpFeed:
     ) -> BinancePerpFeatures:
         """Extract features from memory if streaming, fallback to REST snapshot if empty or stale."""
         current_time = now_ms or int(time.time() * 1000)
+        with self._state_lock:
+            has_depth = bool(self._bids and self._asks)
+            depth_recv_ms = self._depth_received_at_ms
+
         # If we have bids/asks and data is fresh (< 5s old), compute from live memory
-        if self._bids and self._asks and (current_time - self._depth_received_at_ms < 5000):
+        if has_depth and (current_time - depth_recv_ms < 5000):
             open_mid: float | None = None
             open_ts: int | None = None
             open_source_ts: int | None = None
@@ -411,12 +431,18 @@ class BinancePerpFeed:
         if binance_open_price is None and round_start_price is not None:
             binance_open_price = round_start_price
 
-        source_ts = self._depth_source_timestamp_ms
-        recv_ts = self._depth_received_at_ms or now_ms
+        # Atomic memory snapshot of order book and trade history under lock
+        with self._state_lock:
+            bids = list(self._bids)
+            asks = list(self._asks)
+            source_ts = self._depth_source_timestamp_ms
+            recv_ts = self._depth_received_at_ms or now_ms
+            trade_list = list(self._trades)
+
         receipt_age = max(0, now_ms - recv_ts)
         source_age = max(0, now_ms - source_ts) if source_ts is not None else None
 
-        if not self._bids or not self._asks:
+        if not bids or not asks:
             return BinancePerpFeatures(
                 best_bid=0.0,
                 best_ask=0.0,
@@ -451,10 +477,10 @@ class BinancePerpFeed:
                 rejection_reason="Empty bids or asks in order book",
             )
 
-        best_bid = self._bids[0][0]
-        bid_qty_1 = self._bids[0][1]
-        best_ask = self._asks[0][0]
-        ask_qty_1 = self._asks[0][1]
+        best_bid = bids[0][0]
+        bid_qty_1 = bids[0][1]
+        best_ask = asks[0][0]
+        ask_qty_1 = asks[0][1]
 
         # Invariant: reject crossed order books
         if best_bid >= best_ask:
@@ -505,13 +531,13 @@ class BinancePerpFeed:
             microprice_offset_bps = 0.0
 
         # Depth imbalances: top 5 and top 20
-        top5_bid_qty = sum(q for _, q in self._bids[:5])
-        top5_ask_qty = sum(q for _, q in self._asks[:5])
+        top5_bid_qty = sum(q for _, q in bids[:5])
+        top5_ask_qty = sum(q for _, q in asks[:5])
         tot5 = top5_bid_qty + top5_ask_qty
         top5_imbalance = (top5_bid_qty - top5_ask_qty) / tot5 if tot5 > 0 else 0.0
 
-        top20_bid_qty = sum(q for _, q in self._bids[:20])
-        top20_ask_qty = sum(q for _, q in self._asks[:20])
+        top20_bid_qty = sum(q for _, q in bids[:20])
+        top20_ask_qty = sum(q for _, q in asks[:20])
         tot20 = top20_bid_qty + top20_ask_qty
         top20_imbalance = (top20_bid_qty - top20_ask_qty) / tot20 if tot20 > 0 else 0.0
 
@@ -529,14 +555,14 @@ class BinancePerpFeed:
                     ((mid_price - binance_open_price) / binance_open_price) * 10_000.0, 3
                 )
 
-        # Taker flow and price returns over rolling windows: 10s, 30s, 60s
-        taker_10s = self._compute_taker_flow_window(now_ms, window_sec=10)
-        taker_30s = self._compute_taker_flow_window(now_ms, window_sec=30)
-        taker_60s = self._compute_taker_flow_window(now_ms, window_sec=60)
+        # Taker flow and price returns over rolling windows: 10s, 30s, 60s using snapshot
+        taker_10s = self._compute_taker_flow_window(now_ms, window_sec=10, trades=trade_list)
+        taker_30s = self._compute_taker_flow_window(now_ms, window_sec=30, trades=trade_list)
+        taker_60s = self._compute_taker_flow_window(now_ms, window_sec=60, trades=trade_list)
 
-        ret_10s = self._compute_price_return_window(now_ms, mid_price, window_sec=10)
-        ret_30s = self._compute_price_return_window(now_ms, mid_price, window_sec=30)
-        ret_60s = self._compute_price_return_window(now_ms, mid_price, window_sec=60)
+        ret_10s = self._compute_price_return_window(now_ms, mid_price, window_sec=10, trades=trade_list)
+        ret_30s = self._compute_price_return_window(now_ms, mid_price, window_sec=30, trades=trade_list)
+        ret_60s = self._compute_price_return_window(now_ms, mid_price, window_sec=60, trades=trade_list)
 
         return BinancePerpFeatures(
             best_bid=round(best_bid, 2),
@@ -576,19 +602,28 @@ class BinancePerpFeed:
         self,
         now_ms: int,
         window_sec: int,
+        trades: list[tuple[int, float, float, bool]] | None = None,
     ) -> tuple[float, float, float] | None:
         """Compute (imbalance, buy_qty, sell_qty) for window.
 
         Returns None if trade history does NOT cover at least window_sec.
         Never fabricate zero imbalance when coverage is missing.
         """
-        if not self._trades:
+        if trades is None:
+            with self._state_lock:
+                if not self._trades:
+                    return None
+                trade_list = list(self._trades)
+        else:
+            trade_list = trades
+
+        if not trade_list:
             return None
 
         window_ms = window_sec * 1000
         cutoff_ms = now_ms - window_ms
 
-        oldest_ts = self._trades[0][0]
+        oldest_ts = trade_list[0][0]
         # Invariant: data coverage requirement
         if oldest_ts > cutoff_ms:
             return None
@@ -596,7 +631,7 @@ class BinancePerpFeed:
         buy_qty = 0.0
         sell_qty = 0.0
 
-        for ts, _price, qty, is_buyer_maker in reversed(self._trades):
+        for ts, _price, qty, is_buyer_maker in reversed(trade_list):
             if ts < cutoff_ms:
                 break
             if is_buyer_maker:
@@ -613,23 +648,35 @@ class BinancePerpFeed:
         now_ms: int,
         current_mid: float,
         window_sec: int,
+        trades: list[tuple[int, float, float, bool]] | None = None,
     ) -> float | None:
         """Compute price return over window_sec in basis points.
 
         Returns None if trade history does not span back to window_sec.
         """
-        if not self._trades or current_mid <= 0:
+        if current_mid <= 0:
+            return None
+
+        if trades is None:
+            with self._state_lock:
+                if not self._trades:
+                    return None
+                trade_list = list(self._trades)
+        else:
+            trade_list = trades
+
+        if not trade_list:
             return None
 
         window_ms = window_sec * 1000
         target_ts = now_ms - window_ms
 
-        oldest_ts = self._trades[0][0]
+        oldest_ts = trade_list[0][0]
         if oldest_ts > target_ts:
             return None
 
         past_price: float | None = None
-        for ts, price, _qty, _m in reversed(self._trades):
+        for ts, price, _qty, _m in reversed(trade_list):
             if ts <= target_ts:
                 past_price = price
                 break
