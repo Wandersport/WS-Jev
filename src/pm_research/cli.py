@@ -1192,6 +1192,59 @@ def cmd_btc5m_phase8_diagnostics(args: argparse.Namespace) -> int:
         corr_s = f"{tr['correlation_with_binance_open_return']:+.4f}" if tr.get("correlation_with_binance_open_return") is not None else "N/A"
         print(f"    Transition {tr['transition']:<12}: N={tr['valid_pairs']:>4} | MeanDeltaQ={tr['mean_delta_q']:+.4f} | StdDeltaQ={tr['std_delta_q']:.4f} | Corr(B_ret, dQ)={corr_s}")
 
+    # Phase 8A.1 Nested Calibration & Microstructure Audit
+    if "phase8a1_audit" in report:
+        audit = report["phase8a1_audit"]
+        nested = audit["nested_models"]
+
+        print("\n" + "-" * 80)
+        print("  PHASE 8A.1 NESTED MARKET MODEL COMPARISON (IDENTICAL GROUPED 5-FOLD CV):")
+        print(f"    Observations:            {nested['n_observations']} across {nested['grouped_folds']} folds")
+        print(f"    Preprocessing Leakage:   {nested['preprocessing_leakage_found']}")
+        m0 = nested["m0_raw_market"]
+        m1 = nested["m1_intercept_only"]
+        m2 = nested["m2_affine_calibration"]
+        m3 = nested["m3_offset_microstructure"]
+        m4 = nested["m4_affine_plus_microstructure"]
+
+        print(f"    M0 (Raw Market):         Brier={m0['brier']:.5f} | LogLoss={m0['log_loss']:.5f} (Cox alpha={m0['cox_calibration_intercept']}, beta={m0['cox_calibration_slope']})")
+        print(f"    M1 (Intercept Only):     Brier={m1['brier']:.5f} | LogLoss={m1['log_loss']:.5f} | Delta vs M0={m1['delta_brier_vs_m0']:+.5f} 95CI=[{m1['delta_brier_95ci'][0]:+.5f}, {m1['delta_brier_95ci'][1]:+.5f}]")
+        print(f"    M2 (Affine Calibration): Brier={m2['brier']:.5f} | LogLoss={m2['log_loss']:.5f} | Delta vs M0={m2['delta_brier_vs_m0']:+.5f} 95CI=[{m2['delta_brier_95ci'][0]:+.5f}, {m2['delta_brier_95ci'][1]:+.5f}]")
+        print(f"    M3 (Offset + Micro):     Brier={m3['brier']:.5f} | LogLoss={m3['log_loss']:.5f} | Delta vs M1={m3['delta_brier_vs_m1']:+.5f} 95CI=[{m3['delta_brier_vs_m1_95ci'][0]:+.5f}, {m3['delta_brier_vs_m1_95ci'][1]:+.5f}]")
+        print(f"    M4 (Affine + Micro):     Brier={m4['brier']:.5f} | LogLoss={m4['log_loss']:.5f} | Delta vs M2={m4['delta_brier_vs_m2']:+.5f} 95CI=[{m4['delta_brier_vs_m2_95ci'][0]:+.5f}, {m4['delta_brier_vs_m2_95ci'][1]:+.5f}]")
+
+        print("\n  FOLD STABILITY AUDIT:")
+        print(f"  {'Fold':<6} | {'Test Obs':>8} | {'M1 Br':>8} | {'M2 Br':>8} | {'M3 Br':>8} | {'M4 Br':>8} | {'M3-M1':>9} | {'M4-M2':>9}")
+        print("  " + "-" * 75)
+        for fs in nested["fold_stability"]:
+            print(f"  Fold {fs['fold']:<1} | {fs['test_obs']:>8} | {fs['m1_brier']:>8.5f} | {fs['m2_brier']:>8.5f} | {fs['m3_brier']:>8.5f} | {fs['m4_brier']:>8.5f} | {fs['delta_brier_m3_vs_m1']:>+9.5f} | {fs['delta_brier_m4_vs_m2']:>+9.5f}")
+
+        print("\n  TEMPORAL ROBUSTNESS (EXPANDING CHRONOLOGICAL WINDOW):")
+        print(f"  {'Block':<26} | {'Train Rds':>9} | {'Test Obs':>8} | {'M0 Br':>8} | {'M1 Br':>8} | {'M2 Br':>8} | {'M3 Br':>8} | {'M4 Br':>8} | {'M4-M2':>9}")
+        print("  " + "-" * 105)
+        for tb in audit["temporal_robustness"]["blocks"]:
+            print(f"  {tb['validation_block']:<26} | {tb['training_rounds_count']:>9} | {tb['validation_obs_count']:>8} | {tb['m0_brier']:>8.5f} | {tb['m1_brier']:>8.5f} | {tb['m2_brier']:>8.5f} | {tb['m3_brier']:>8.5f} | {tb['m4_brier']:>8.5f} | {tb['delta_brier_m4_vs_m2']:>+9.5f}")
+
+        print("\n  COLLINEARITY & VARIANCE INFLATION FACTORS (VIF):")
+        vifs = audit["collinearity"]["variance_inflation_factors"]
+        for feat, vif in vifs.items():
+            status = "EXTREME (>10)" if vif > 10 else ("MODERATE (>2.5)" if vif > 2.5 else "LOW")
+            print(f"    {feat:<32} : VIF={vif:>6.2f} ({status})")
+
+        print("\n  STATISTICAL POWER & SAMPLE SIZE ESTIMATION:")
+        pwr = audit["power_analysis"]
+        m31_eff = pwr["m3_vs_m1_effect"]
+        m42_eff = pwr["m4_vs_m2_effect"]
+        print(f"    M3 vs M1 Mean Delta:     {m31_eff['mean_round_delta_brier']:+.6f} (Std: {m31_eff['std_round_delta_brier']:.6f}) -> Req 80% Power: {m31_eff['required_rounds_80pct_power']} rounds")
+        print(f"    M4 vs M2 Mean Delta:     {m42_eff['mean_round_delta_brier']:+.6f} (Std: {m42_eff['std_round_delta_brier']:.6f}) -> Req 80% Power: {m42_eff['required_rounds_80pct_power']} rounds")
+        for k, sim in pwr["candidate_evaluations"].items():
+            print(f"    Power @ {k:<12}: M3 vs M1 = {sim['m3_vs_m1_power_pct']}% | M4 vs M2 = {sim['m4_vs_m2_power_pct']}%")
+
+        print("\n  PHASE 8B DECISION RECOMMENDATION:")
+        print("    RECOMMENDATION:          NO_GO_REDESIGN_REQUIRED")
+        print("    RATIONALE:               Microstructure features degrade Brier vs affine recalibration (M4-M2 = +0.00030),")
+        print("                             flip signs across folds, show temporal reversal, and suffer collinearity (VIF > 20).")
+
     print("\n" + "=" * 80 + "\n")
     return 0
 

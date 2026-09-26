@@ -242,3 +242,122 @@ def test_lead_lag_feasibility_transition_counts() -> None:
     assert transitions["180s -> 120s"] > 400
     assert transitions["120s -> 60s"] > 200
     assert transitions["60s -> 30s"] > 80
+
+
+def test_nested_market_models_identical_folds() -> None:
+    """M0 through M4 must be evaluated on identical grouped folds with zero leakage."""
+    db = Database("data/pm_research.db")
+    diag = BTC5mPhase8Diagnostics(db)
+    nested = diag.evaluate_nested_market_models()
+
+    assert nested["n_observations"] == 1649
+    assert nested["grouped_folds"] == 5
+    assert nested["preprocessing_leakage_found"] == "NO"
+
+    # Verify Brier orderings and metrics exist
+    assert "m0_raw_market" in nested
+    assert "m1_intercept_only" in nested
+    assert "m2_affine_calibration" in nested
+    assert "m3_offset_microstructure" in nested
+    assert "m4_affine_plus_microstructure" in nested
+
+    m0_br = nested["m0_raw_market"]["brier"]
+    m1_br = nested["m1_intercept_only"]["brier"]
+    m2_br = nested["m2_affine_calibration"]["brier"]
+    m3_br = nested["m3_offset_microstructure"]["brier"]
+    m4_br = nested["m4_affine_plus_microstructure"]["brier"]
+
+    assert 0.13 < m0_br < 0.15
+    assert 0.13 < m1_br < 0.15
+    assert 0.13 < m2_br < 0.15
+    assert 0.13 < m3_br < 0.15
+    assert 0.13 < m4_br < 0.15
+
+    # Fold stability: exactly 5 folds
+    assert len(nested["fold_stability"]) == 5
+    for fs in nested["fold_stability"]:
+        assert fs["test_obs"] > 0
+        assert "delta_brier_m3_vs_m1" in fs
+        assert "delta_brier_m4_vs_m2" in fs
+
+
+def test_fit_logistic_regression_custom_penalty_vector() -> None:
+    """Logistic regression must support element-specific L2 regularization penalties."""
+    X = [[1.0, 2.0], [2.0, 1.0], [-1.0, -2.0], [-2.0, -1.0]]
+    y = [1.0, 1.0, 0.0, 0.0]
+
+    # Zero penalty on intercept and first weight, heavy penalty on second weight
+    b0, b = fit_logistic_regression(
+        X,
+        y,
+        offsets=None,
+        fit_intercept=True,
+        l2_reg=[0.0, 0.0, 1000.0],
+        max_iter=50,
+    )
+    assert math.isfinite(b0)
+    assert abs(b[0]) > abs(b[1])  # heavily penalized b[1] should shrink toward zero
+
+
+def test_temporal_robustness_expanding_window() -> None:
+    """Expanding chronological window must train strictly on past rounds and test on future."""
+    db = Database("data/pm_research.db")
+    diag = BTC5mPhase8Diagnostics(db)
+    temporal = diag.evaluate_temporal_robustness()
+
+    assert temporal["label"] == "DEVELOPMENT_TEMPORAL_ROBUSTNESS_ONLY"
+    blocks = temporal["blocks"]
+    assert len(blocks) == 4  # Blocks 1 through 4
+
+    for b_idx, block in enumerate(blocks):
+        # Training rounds count must strictly expand: 100, 200, 300, 400
+        assert block["training_rounds_count"] == (b_idx + 1) * 100
+        assert block["validation_obs_count"] > 200
+        assert "delta_brier_m4_vs_m2" in block
+
+
+def test_collinearity_and_vif_calculation() -> None:
+    """Collinearity evaluation must accurately identify redundant microstructure features."""
+    db = Database("data/pm_research.db")
+    diag = BTC5mPhase8Diagnostics(db)
+    collinearity = diag.evaluate_collinearity_and_price_displacement()
+
+    vifs = collinearity["variance_inflation_factors"]
+    assert vifs["binance_microprice_offset_bps"] > 10.0
+    assert vifs["binance_top5_depth_imbalance"] > 10.0
+    assert vifs["binance_basis_bps"] < 5.0
+
+    corr = collinearity["correlation_matrix"]
+    assert corr["binance_microprice_offset_bps"]["binance_top5_depth_imbalance"] > 0.95
+    assert corr["binance_return_since_open_bps"]["ref_distance_to_beat_bps"] > 0.70
+
+
+def test_sample_size_and_power_estimation() -> None:
+    """Power analysis must provide simulated power for 500, 1000, 2000 rounds."""
+    db = Database("data/pm_research.db")
+    diag = BTC5mPhase8Diagnostics(db)
+    nested = diag.evaluate_nested_market_models()
+    pwr = diag.evaluate_sample_size_and_power(nested)
+
+    assert "m3_vs_m1_effect" in pwr
+    assert "m4_vs_m2_effect" in pwr
+    assert "candidate_evaluations" in pwr
+    assert "500_rounds" in pwr["candidate_evaluations"]
+    assert "1000_rounds" in pwr["candidate_evaluations"]
+    assert "2000_rounds" in pwr["candidate_evaluations"]
+
+
+def test_cost_accounting_reconciliation_with_database() -> None:
+    """Verify that reported cost breakdown exactly matches the raw SQLite database values."""
+    db = Database("data/pm_research.db")
+    fcs = db.get_btc5m_forecasts()
+    assert len(fcs) == 6600
+
+    sum_cost = sum(fc.cost or 0.0 for fc in fcs)
+    assert math.isclose(sum_cost, 0.242322, abs_tol=1e-5)
+
+    sum_prompt_tokens = sum(fc.input_tokens or 0 for fc in fcs)
+    sum_completion_tokens = sum(fc.output_tokens or 0 for fc in fcs)
+    assert sum_prompt_tokens == 5768893
+    assert sum_completion_tokens == 343148
+

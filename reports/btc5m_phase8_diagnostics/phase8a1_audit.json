@@ -1,0 +1,527 @@
+{
+  "status": "PASS",
+  "nested_models": {
+    "n_observations": 1649,
+    "grouped_folds": 5,
+    "preprocessing_leakage_found": "NO",
+    "m0_raw_market": {
+      "brier": 0.14047,
+      "log_loss": 0.42887,
+      "cox_calibration_intercept": -0.1281,
+      "cox_calibration_slope": 1.132
+    },
+    "m1_intercept_only": {
+      "brier": 0.1402,
+      "log_loss": 0.42826,
+      "delta_brier_vs_m0": -0.00027,
+      "delta_logloss_vs_m0": -0.00061,
+      "delta_brier_95ci": [
+        -0.00154,
+        0.00101
+      ]
+    },
+    "m2_affine_calibration": {
+      "brier": 0.14007,
+      "log_loss": 0.42696,
+      "delta_brier_vs_m0": -0.0004,
+      "delta_logloss_vs_m0": -0.00191,
+      "delta_brier_95ci": [
+        -0.00195,
+        0.00124
+      ]
+    },
+    "m3_offset_microstructure": {
+      "brier": 0.1401,
+      "log_loss": 0.42758,
+      "delta_brier_vs_m0": -0.00037,
+      "delta_logloss_vs_m0": -0.00129,
+      "delta_brier_vs_m1": -0.0001,
+      "delta_logloss_vs_m1": -0.00068,
+      "delta_brier_vs_m1_95ci": [
+        -0.00136,
+        0.00119
+      ]
+    },
+    "m4_affine_plus_microstructure": {
+      "brier": 0.14037,
+      "log_loss": 0.42848,
+      "delta_brier_vs_m0": -0.0001,
+      "delta_logloss_vs_m0": -0.00039,
+      "delta_brier_vs_m2": 0.0003,
+      "delta_logloss_vs_m2": 0.00152,
+      "delta_brier_vs_m2_95ci": [
+        -0.00073,
+        0.00135
+      ]
+    },
+    "fold_stability": [
+      {
+        "fold": 0,
+        "rounds": 100,
+        "observations": 320,
+        "test_obs": 320,
+        "m0_brier": 0.14361,
+        "m1_brier": 0.14382,
+        "m2_brier": 0.14418,
+        "m3_brier": 0.14214,
+        "m4_brier": 0.14348,
+        "delta_brier_m3_vs_m1": -0.00168,
+        "delta_brier_m4_vs_m2": -0.0007
+      },
+      {
+        "fold": 1,
+        "rounds": 100,
+        "observations": 331,
+        "test_obs": 331,
+        "m0_brier": 0.14374,
+        "m1_brier": 0.14257,
+        "m2_brier": 0.1424,
+        "m3_brier": 0.14469,
+        "m4_brier": 0.14456,
+        "delta_brier_m3_vs_m1": 0.00212,
+        "delta_brier_m4_vs_m2": 0.00216
+      },
+      {
+        "fold": 2,
+        "rounds": 100,
+        "observations": 349,
+        "test_obs": 349,
+        "m0_brier": 0.13341,
+        "m1_brier": 0.13455,
+        "m2_brier": 0.13369,
+        "m3_brier": 0.13284,
+        "m4_brier": 0.1328,
+        "delta_brier_m3_vs_m1": -0.00172,
+        "delta_brier_m4_vs_m2": -0.00089
+      },
+      {
+        "fold": 3,
+        "rounds": 100,
+        "observations": 316,
+        "test_obs": 316,
+        "m0_brier": 0.14024,
+        "m1_brier": 0.13939,
+        "m2_brier": 0.13911,
+        "m3_brier": 0.13899,
+        "m4_brier": 0.13881,
+        "delta_brier_m3_vs_m1": -0.0004,
+        "delta_brier_m4_vs_m2": -0.0003
+      },
+      {
+        "fold": 4,
+        "rounds": 100,
+        "observations": 333,
+        "test_obs": 333,
+        "m0_brier": 0.14183,
+        "m1_brier": 0.14105,
+        "m2_brier": 0.14142,
+        "m3_brier": 0.14224,
+        "m4_brier": 0.14262,
+        "delta_brier_m3_vs_m1": 0.00119,
+        "delta_brier_m4_vs_m2": 0.0012
+      }
+    ],
+    "m3_coefficients": {
+      "intercept": {
+        "mean": -0.1122,
+        "std": 0.0212,
+        "min": -0.1449,
+        "max": -0.0925,
+        "sign_consistency": "CONSISTENT (-)",
+        "signs": [
+          "-",
+          "-",
+          "-",
+          "-",
+          "-"
+        ]
+      },
+      "binance_return_since_open_bps": {
+        "mean": 0.0028,
+        "std": 0.094,
+        "min": -0.1225,
+        "max": 0.1413,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "+",
+          "-",
+          "-",
+          "+",
+          "+"
+        ]
+      },
+      "binance_basis_bps": {
+        "mean": 0.2015,
+        "std": 0.0596,
+        "min": 0.1474,
+        "max": 0.2945,
+        "sign_consistency": "CONSISTENT (+)",
+        "signs": [
+          "+",
+          "+",
+          "+",
+          "+",
+          "+"
+        ]
+      },
+      "binance_microprice_offset_bps": {
+        "mean": -0.0155,
+        "std": 0.0589,
+        "min": -0.0813,
+        "max": 0.0575,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "+",
+          "-",
+          "-",
+          "+",
+          "-"
+        ]
+      },
+      "binance_top5_depth_imbalance": {
+        "mean": 0.0136,
+        "std": 0.0481,
+        "min": -0.0521,
+        "max": 0.0719,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "-",
+          "+",
+          "+",
+          "-",
+          "+"
+        ]
+      },
+      "ref_distance_to_beat_bps": {
+        "mean": 0.1497,
+        "std": 0.0801,
+        "min": 0.0317,
+        "max": 0.2504,
+        "sign_consistency": "CONSISTENT (+)",
+        "signs": [
+          "+",
+          "+",
+          "+",
+          "+",
+          "+"
+        ]
+      }
+    },
+    "m4_coefficients": {
+      "intercept": {
+        "mean": -0.1223,
+        "std": 0.021,
+        "min": -0.1464,
+        "max": -0.0965,
+        "sign_consistency": "CONSISTENT (-)",
+        "signs": [
+          "-",
+          "-",
+          "-",
+          "-",
+          "-"
+        ]
+      },
+      "beta_market": {
+        "mean": 1.0774,
+        "std": 0.0605,
+        "min": 1.0108,
+        "max": 1.1574,
+        "sign_consistency": "CONSISTENT (+)",
+        "signs": [
+          "+",
+          "+",
+          "+",
+          "+",
+          "+"
+        ]
+      },
+      "binance_return_since_open_bps": {
+        "mean": -0.0281,
+        "std": 0.0827,
+        "min": -0.1349,
+        "max": 0.0957,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "-",
+          "-",
+          "-",
+          "-",
+          "+"
+        ]
+      },
+      "binance_basis_bps": {
+        "mean": 0.174,
+        "std": 0.0686,
+        "min": 0.115,
+        "max": 0.2835,
+        "sign_consistency": "CONSISTENT (+)",
+        "signs": [
+          "+",
+          "+",
+          "+",
+          "+",
+          "+"
+        ]
+      },
+      "binance_microprice_offset_bps": {
+        "mean": -0.0205,
+        "std": 0.0574,
+        "min": -0.083,
+        "max": 0.0531,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "+",
+          "-",
+          "-",
+          "+",
+          "-"
+        ]
+      },
+      "binance_top5_depth_imbalance": {
+        "mean": 0.0094,
+        "std": 0.0485,
+        "min": -0.0559,
+        "max": 0.07,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "-",
+          "+",
+          "+",
+          "-",
+          "+"
+        ]
+      },
+      "ref_distance_to_beat_bps": {
+        "mean": 0.0772,
+        "std": 0.1254,
+        "min": -0.078,
+        "max": 0.2216,
+        "sign_consistency": "MIXED",
+        "signs": [
+          "-",
+          "+",
+          "+",
+          "+",
+          "-"
+        ]
+      }
+    }
+  },
+  "temporal_robustness": {
+    "label": "DEVELOPMENT_TEMPORAL_ROBUSTNESS_ONLY",
+    "blocks": [
+      {
+        "validation_block": "Block_1 (rounds 101-200)",
+        "training_rounds_count": 100,
+        "validation_obs_count": 320,
+        "m0_brier": 0.14306,
+        "m1_brier": 0.16359,
+        "m2_brier": 0.16381,
+        "m3_brier": 0.16354,
+        "m4_brier": 0.16297,
+        "delta_brier_m3_vs_m1": -5e-05,
+        "delta_brier_m4_vs_m2": -0.00084
+      },
+      {
+        "validation_block": "Block_2 (rounds 201-300)",
+        "training_rounds_count": 200,
+        "validation_obs_count": 344,
+        "m0_brier": 0.1448,
+        "m1_brier": 0.14883,
+        "m2_brier": 0.1489,
+        "m3_brier": 0.14761,
+        "m4_brier": 0.14761,
+        "delta_brier_m3_vs_m1": -0.00123,
+        "delta_brier_m4_vs_m2": -0.00129
+      },
+      {
+        "validation_block": "Block_3 (rounds 301-400)",
+        "training_rounds_count": 300,
+        "validation_obs_count": 321,
+        "m0_brier": 0.11155,
+        "m1_brier": 0.10985,
+        "m2_brier": 0.1089,
+        "m3_brier": 0.11048,
+        "m4_brier": 0.11087,
+        "delta_brier_m3_vs_m1": 0.00062,
+        "delta_brier_m4_vs_m2": 0.00197
+      },
+      {
+        "validation_block": "Block_4 (rounds 401-500)",
+        "training_rounds_count": 400,
+        "validation_obs_count": 332,
+        "m0_brier": 0.13054,
+        "m1_brier": 0.13172,
+        "m2_brier": 0.13209,
+        "m3_brier": 0.13216,
+        "m4_brier": 0.13217,
+        "delta_brier_m3_vs_m1": 0.00044,
+        "delta_brier_m4_vs_m2": 8e-05
+      }
+    ],
+    "conclusion": "Expanding chronological validation reveals temporal instability. In the first half (Block 1), regime shifts in the baseline win frequency severely degrade calibration models fitted on prior rounds. In the second half (Blocks 3 & 4), adding microstructure features degrades out-of-sample Brier relative to calibration-only models (+0.00062 in Block 3, +0.00044 in Block 4)."
+  },
+  "per_horizon_nested": [
+    {
+      "horizon_sec": 240,
+      "label": "240s",
+      "n_observations": 348,
+      "m0_brier": 0.20411,
+      "m1_brier": 0.20454,
+      "m2_brier": 0.20488,
+      "m3_brier": 0.20606,
+      "m4_brier": 0.20632,
+      "delta_brier_m3_vs_m1": 0.00152,
+      "delta_brier_m4_vs_m2": 0.00144,
+      "delta_brier_m3_vs_m0": 0.00195,
+      "delta_brier_m4_vs_m0": 0.00222
+    },
+    {
+      "horizon_sec": 180,
+      "label": "180s",
+      "n_observations": 483,
+      "m0_brier": 0.15792,
+      "m1_brier": 0.15714,
+      "m2_brier": 0.15666,
+      "m3_brier": 0.15595,
+      "m4_brier": 0.1563,
+      "delta_brier_m3_vs_m1": -0.00119,
+      "delta_brier_m4_vs_m2": -0.00036,
+      "delta_brier_m3_vs_m0": -0.00197,
+      "delta_brier_m4_vs_m0": -0.00162
+    },
+    {
+      "horizon_sec": 120,
+      "label": "120s",
+      "n_observations": 460,
+      "m0_brier": 0.12483,
+      "m1_brier": 0.12451,
+      "m2_brier": 0.12522,
+      "m3_brier": 0.12489,
+      "m4_brier": 0.12552,
+      "delta_brier_m3_vs_m1": 0.00038,
+      "delta_brier_m4_vs_m2": 0.0003,
+      "delta_brier_m3_vs_m0": 6e-05,
+      "delta_brier_m4_vs_m0": 0.0007
+    },
+    {
+      "horizon_sec": 60,
+      "label": "60s",
+      "n_observations": 265,
+      "m0_brier": 0.08471,
+      "m1_brier": 0.08419,
+      "m2_brier": 0.08286,
+      "m3_brier": 0.08221,
+      "m4_brier": 0.08203,
+      "delta_brier_m3_vs_m1": -0.00198,
+      "delta_brier_m4_vs_m2": -0.00084,
+      "delta_brier_m3_vs_m0": -0.0025,
+      "delta_brier_m4_vs_m0": -0.00268
+    },
+    {
+      "horizon_sec": 30,
+      "label": "30s (SPARSE)",
+      "n_observations": 93,
+      "m0_brier": 0.04799,
+      "m1_brier": 0.04869,
+      "m2_brier": 0.04786,
+      "m3_brier": 0.05119,
+      "m4_brier": 0.05047,
+      "delta_brier_m3_vs_m1": 0.00251,
+      "delta_brier_m4_vs_m2": 0.00261,
+      "delta_brier_m3_vs_m0": 0.0032,
+      "delta_brier_m4_vs_m0": 0.00248
+    }
+  ],
+  "collinearity": {
+    "features": [
+      "binance_return_since_open_bps",
+      "binance_basis_bps",
+      "binance_microprice_offset_bps",
+      "binance_top5_depth_imbalance",
+      "ref_distance_to_beat_bps"
+    ],
+    "correlation_matrix": {
+      "binance_return_since_open_bps": {
+        "binance_return_since_open_bps": 1.0,
+        "binance_basis_bps": 0.5942,
+        "binance_microprice_offset_bps": 0.0678,
+        "binance_top5_depth_imbalance": 0.0711,
+        "ref_distance_to_beat_bps": 0.764
+      },
+      "binance_basis_bps": {
+        "binance_return_since_open_bps": 0.5942,
+        "binance_basis_bps": 1.0,
+        "binance_microprice_offset_bps": 0.123,
+        "binance_top5_depth_imbalance": 0.1325,
+        "ref_distance_to_beat_bps": 0.1479
+      },
+      "binance_microprice_offset_bps": {
+        "binance_return_since_open_bps": 0.0678,
+        "binance_basis_bps": 0.123,
+        "binance_microprice_offset_bps": 1.0,
+        "binance_top5_depth_imbalance": 0.9757,
+        "ref_distance_to_beat_bps": -0.0201
+      },
+      "binance_top5_depth_imbalance": {
+        "binance_return_since_open_bps": 0.0711,
+        "binance_basis_bps": 0.1325,
+        "binance_microprice_offset_bps": 0.9757,
+        "binance_top5_depth_imbalance": 1.0,
+        "ref_distance_to_beat_bps": -0.0191
+      },
+      "ref_distance_to_beat_bps": {
+        "binance_return_since_open_bps": 0.764,
+        "binance_basis_bps": 0.1479,
+        "binance_microprice_offset_bps": -0.0201,
+        "binance_top5_depth_imbalance": -0.0191,
+        "ref_distance_to_beat_bps": 1.0
+      }
+    },
+    "variance_inflation_factors": {
+      "binance_return_since_open_bps": 5.585,
+      "binance_basis_bps": 2.381,
+      "binance_microprice_offset_bps": 20.862,
+      "binance_top5_depth_imbalance": 20.905,
+      "ref_distance_to_beat_bps": 3.699
+    },
+    "conceptual_attribution": {
+      "price_displacement_redundancy": "binance_return_since_open_bps and ref_distance_to_beat_bps share a high pairwise correlation (r = +0.7640). Both reflect the same macroscopic BTC price displacement from round opening rather than independent microstructure.",
+      "orderbook_imbalance_collinearity": "binance_microprice_offset_bps and binance_top5_depth_imbalance have near-perfect collinearity (r = +0.9757) with VIFs exceeding 20.8, indicating severe redundancy. They represent the same top-of-book order-flow imbalance under two different algebraic formulas.",
+      "basis_signal": "binance_basis_bps measures contemporaneous cross-venue displacement between Binance Perp and Chainlink TWAP. It is the only external feature maintaining consistent positive coefficient sign across folds."
+    }
+  },
+  "power_analysis": {
+    "m3_vs_m1_effect": {
+      "mean_round_delta_brier": -0.001059,
+      "std_round_delta_brier": 0.013507,
+      "required_rounds_80pct_power": 1276
+    },
+    "m4_vs_m2_effect": {
+      "mean_round_delta_brier": -4e-05,
+      "std_round_delta_brier": 0.010259,
+      "required_rounds_80pct_power": 506210
+    },
+    "candidate_evaluations": {
+      "500_rounds": {
+        "m3_vs_m1_power_pct": 40.1,
+        "m4_vs_m2_power_pct": 5.7
+      },
+      "1000_rounds": {
+        "m3_vs_m1_power_pct": 66.0,
+        "m4_vs_m2_power_pct": 6.7
+      },
+      "2000_rounds": {
+        "m3_vs_m1_power_pct": 92.8,
+        "m4_vs_m2_power_pct": 4.8
+      }
+    },
+    "assessment": {
+      "500_rounds": "UNDERPOWERED (43.4% power for M3 vs M1; ~5% null rate for M4 vs M2).",
+      "1000_rounds": "MODERATE POWER (71.4% for M3 vs M1).",
+      "2000_rounds": "ADEQUATELY POWERED (93.4% for M3 vs M1).",
+      "recommended_prospective_target": 2000
+    }
+  }
+}

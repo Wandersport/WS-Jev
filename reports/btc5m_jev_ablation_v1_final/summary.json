@@ -73,8 +73,10 @@
     }
   },
   "archive": {
-    "closing_commit": "e9091a3cb4be2501f6e4b1f81f3e601e1bc2f07b",
-    "git_tag": "btc5m-jev-ablation-v1-500r",
+    "runtime_final_commit": "e9091a3cb4be2501f6e4b1f81f3e601e1bc2f07b",
+    "runtime_git_tag": "btc5m-jev-ablation-v1-runtime-500r",
+    "archive_analysis_commit": "6068089fe0a255d886be0b8dc4b98c3f32e6b37d",
+    "archive_git_tag": "btc5m-jev-ablation-v1-500r",
     "checkpoint_file": "data/checkpoints/checkpoint_500r_20260926_073557.json",
     "backup_file": "data/backups/pm_research_backup_20260926_073555_500r.db"
   }

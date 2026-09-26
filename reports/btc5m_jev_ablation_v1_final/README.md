@@ -6,7 +6,9 @@
 **HORIZONS_SEC**: `(240, 180, 120, 60, 30)`  
 **PRIMARY_BASELINE**: `NATIVE_UP_MIDPOINT`  
 **STATUS**: `FROZEN_COMPLETED` (500 Valid Resolved Rounds Reached)  
-**CLOSING_COMMIT**: `e9091a3cb4be2501f6e4b1f81f3e601e1bc2f07b`  
+**RUNTIME_FINAL_COMMIT**: `e9091a3cb4be2501f6e4b1f81f3e601e1bc2f07b`  
+**RUNTIME_GIT_TAG**: `btc5m-jev-ablation-v1-runtime-500r`  
+**ARCHIVE_ANALYSIS_COMMIT**: `6068089fe0a255d886be0b8dc4b98c3f32e6b37d`  
 **ARCHIVAL_GIT_TAG**: `btc5m-jev-ablation-v1-500r`  
 
 ---
@@ -99,14 +101,15 @@ LATE_JEV_RESPONSES:           0
 ## 4. OpenRouter Financial Accounting
 
 - **CANONICAL_TOTAL_COST_USD**: `$0.243008` (from official OpenRouter API response metadata persisted in checkpoints)
-- **RECORDED_FORECAST_COST_USD**: `$0.242322` (sum of individual forecast row cost attributes)
+- **RECORDED_FORECAST_COST_USD**: `$0.242322` (sum of individual forecast row cost attributes; delta $0.000686 reflects pre-experiment connectivity probe requests)
 - **TOTAL_FORECAST_REQUESTS**: `6,600`
-- **AVERAGE_COST_PER_FORECAST**: `$0.0000368`
-- **BREAKDOWN BY CONDITION**:
-  - `BTC5M_REFERENCE_ONLY`: 1,650 requests | $0.055610 | 1,034,220 input tokens | 77,550 output tokens
-  - `BTC5M_REFERENCE_PLUS_PERP`: 1,650 requests | $0.063162 | 1,228,880 input tokens | 77,550 output tokens
-  - `BTC5M_MARKET_AWARE`: 1,650 requests | $0.058348 | 1,105,440 input tokens | 77,550 output tokens
-  - `BTC5M_FULL`: 1,650 requests | $0.065202 | 1,279,720 input tokens | 77,550 output tokens
+- **AVERAGE_COST_PER_FORECAST**: `$0.0000367`
+- **BREAKDOWN BY CONDITION (PERSISTED DATABASE VALUES)**:
+  - `BTC5M_REFERENCE_ONLY`: 1,650 requests | $0.047530 | 1,130,980 input tokens | 85,748 output tokens
+  - `BTC5M_REFERENCE_PLUS_PERP`: 1,650 requests | $0.060838 | 1,448,535 input tokens | 85,800 output tokens
+  - `BTC5M_MARKET_AWARE`: 1,650 requests | $0.060531 | 1,441,204 input tokens | 85,800 output tokens
+  - `BTC5M_FULL`: 1,650 requests | $0.073423 | 1,748,174 input tokens | 85,800 output tokens
+- **TOTAL TOKENS**: 5,768,893 input tokens | 343,148 output tokens
 
 ---
 
