@@ -334,6 +334,7 @@ def test_round_level_operational_error_resilience(tmp_path: any) -> None:
     collector.lab.poll_round_resolution = MagicMock(return_value=None)
     collector.is_stop_requested = MagicMock(side_effect=[False, True])  # stop after 1 round
     collector.lab.discover_active_round = MagicMock(return_value=round_info)
+    collector.lab.contract_mgr.discover_active_round = MagicMock(return_value=round_info)
 
     # run() should complete gracefully despite the round error
     collector.run()
