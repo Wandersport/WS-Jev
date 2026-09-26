@@ -1,0 +1,12 @@
+{
+  "label": "DEVELOPMENT_CROSS_VALIDATION_ONLY",
+  "n_observations": 1650,
+  "grouped_folds": 5,
+  "microstructure_only_cv_brier": 0.16138,
+  "microstructure_only_cv_logloss": 0.49342,
+  "base_rate_brier": 0.24984,
+  "base_rate_logloss": 0.69282,
+  "delta_brier_vs_base_rate": -0.08846,
+  "delta_brier_vs_jev_ref_only": -0.04357,
+  "delta_brier_vs_jev_ref_perp": -0.02958
+}

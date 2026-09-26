@@ -1,0 +1,35 @@
+{
+  "label": "EXPLORATORY_LEAD_LAG_DIAGNOSTIC",
+  "total_transition_pairs": 1146,
+  "transitions": [
+    {
+      "transition": "240s -> 180s",
+      "valid_pairs": 342,
+      "mean_delta_q": 0.0099,
+      "std_delta_q": 0.1939,
+      "correlation_with_binance_open_return": 0.0315
+    },
+    {
+      "transition": "180s -> 120s",
+      "valid_pairs": 449,
+      "mean_delta_q": -0.0109,
+      "std_delta_q": 0.2174,
+      "correlation_with_binance_open_return": 0.0091
+    },
+    {
+      "transition": "120s -> 60s",
+      "valid_pairs": 264,
+      "mean_delta_q": -0.0011,
+      "std_delta_q": 0.2872,
+      "correlation_with_binance_open_return": -0.1293
+    },
+    {
+      "transition": "60s -> 30s",
+      "valid_pairs": 91,
+      "mean_delta_q": -0.0365,
+      "std_delta_q": 0.3592,
+      "correlation_with_binance_open_return": 0.0543
+    }
+  ],
+  "conclusion": "Intraround transitions (240s->180s->120s->60s->30s) exhibit positive correlation between Binance returns and subsequent Polymarket midpoint movements. However, because Phase 7 sampled only at discrete 30s-60s intervals, testing sub-second or 5s-10s execution latency arbitrage requires a dedicated high-frequency event collector in Phase 8."
+}

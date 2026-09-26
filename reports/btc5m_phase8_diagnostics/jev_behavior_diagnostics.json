@@ -1,0 +1,104 @@
+{
+  "MARKET_AWARE": {
+    "n_paired": 1649,
+    "shrunk_toward_05_count": 1255,
+    "shrunk_toward_05_pct": 76.11,
+    "extremized_away_count": 391,
+    "extremized_away_pct": 23.71,
+    "equal_distance_count": 3,
+    "equal_distance_pct": 0.18,
+    "tiers_by_adjustment_magnitude": [
+      {
+        "tier": "[0.00, 0.02)",
+        "n": 216,
+        "mean_abs_adjustment": 0.0105,
+        "market_brier": 0.20314,
+        "jev_brier": 0.20259,
+        "delta_brier": -0.00055
+      },
+      {
+        "tier": "[0.02, 0.05)",
+        "n": 329,
+        "mean_abs_adjustment": 0.0342,
+        "market_brier": 0.19558,
+        "jev_brier": 0.19859,
+        "delta_brier": 0.00301
+      },
+      {
+        "tier": "[0.05, 0.10)",
+        "n": 443,
+        "mean_abs_adjustment": 0.0736,
+        "market_brier": 0.12708,
+        "jev_brier": 0.13767,
+        "delta_brier": 0.01058
+      },
+      {
+        "tier": "[0.10, 0.20)",
+        "n": 509,
+        "mean_abs_adjustment": 0.1451,
+        "market_brier": 0.10755,
+        "jev_brier": 0.13459,
+        "delta_brier": 0.02704
+      },
+      {
+        "tier": "[0.20, 1.00)",
+        "n": 152,
+        "mean_abs_adjustment": 0.2783,
+        "market_brier": 0.0814,
+        "jev_brier": 0.16412,
+        "delta_brier": 0.08272
+      }
+    ]
+  },
+  "FULL": {
+    "n_paired": 1649,
+    "shrunk_toward_05_count": 1252,
+    "shrunk_toward_05_pct": 75.92,
+    "extremized_away_count": 396,
+    "extremized_away_pct": 24.01,
+    "equal_distance_count": 1,
+    "equal_distance_pct": 0.06,
+    "tiers_by_adjustment_magnitude": [
+      {
+        "tier": "[0.00, 0.02)",
+        "n": 193,
+        "mean_abs_adjustment": 0.0103,
+        "market_brier": 0.21061,
+        "jev_brier": 0.21032,
+        "delta_brier": -0.00029
+      },
+      {
+        "tier": "[0.02, 0.05)",
+        "n": 315,
+        "mean_abs_adjustment": 0.0348,
+        "market_brier": 0.20798,
+        "jev_brier": 0.20828,
+        "delta_brier": 0.0003
+      },
+      {
+        "tier": "[0.05, 0.10)",
+        "n": 427,
+        "mean_abs_adjustment": 0.0741,
+        "market_brier": 0.13827,
+        "jev_brier": 0.14737,
+        "delta_brier": 0.00911
+      },
+      {
+        "tier": "[0.10, 0.20)",
+        "n": 563,
+        "mean_abs_adjustment": 0.1427,
+        "market_brier": 0.09382,
+        "jev_brier": 0.12213,
+        "delta_brier": 0.02831
+      },
+      {
+        "tier": "[0.20, 1.00)",
+        "n": 151,
+        "mean_abs_adjustment": 0.2925,
+        "market_brier": 0.09016,
+        "jev_brier": 0.1836,
+        "delta_brier": 0.09344
+      }
+    ]
+  }
+}

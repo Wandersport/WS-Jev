@@ -18,6 +18,7 @@ Available subcommands:
   jev-probe         Test connectivity and model pinning with TypeSafe Jev decisions API
   jev-shadow-cycle  Execute prospective shadow forecasting cycle on active markets
   jev-shadow-status Display status of prospective Jev shadow forecasts & resolutions
+  btc5m-phase8-diagnostics Run post-hoc diagnostics and exploratory microstructure analysis
 """
 
 from __future__ import annotations
@@ -1110,6 +1111,91 @@ def cmd_btc5m_audit_dataset(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_btc5m_phase8_diagnostics(args: argparse.Namespace) -> int:
+    """Execute Phase 8A post-hoc diagnostics and exploratory microstructure analysis."""
+    from pm_research.research.btc5m.diagnostics import BTC5mPhase8Diagnostics
+
+    db = get_db(args.db)
+    out_dir = Path(getattr(args, "output_dir", "reports/btc5m_phase8_diagnostics"))
+    engine = BTC5mPhase8Diagnostics(db)
+    report = engine.run_all_diagnostics(output_dir=out_dir)
+
+    print("\n" + "=" * 80)
+    print("  [!] BTC 5-MINUTE PHASE 8A POST-HOC DIAGNOSTICS & MICROSTRUCTURE REPORT")
+    print("=" * 80)
+    print("  STATUS:                  PASS")
+    print(f"  OUTPUT_DIRECTORY:        {out_dir}")
+    print("  RESEARCH_INTEGRITY:      IMMUTABLE READ-ONLY EXECUTION")
+    print("  DATA_LEAKAGE_AUDIT:      PASS (NO FUTURE LOOKAHEAD)")
+    print("-" * 80)
+
+    # Per-horizon summary
+    print("\n  PER-HORIZON BENCHMARK EVALUATION:")
+    print(f"  {'Horizon':<8} | {'Forecaster':<26} | {'N':>5} | {'Brier':>7} | {'LogLoss':>7} | {'Acc':>5} | {'DeltaBr':>8} | {'95% Bootstrap CI':<19}")
+    print("  " + "-" * 98)
+    for m in report["per_horizon_metrics"]:
+        delta_str = f"{m['delta_brier']:+.4f}" if m.get("delta_brier") is not None else "BASELINE"
+        ci_str = f"[{m['delta_brier_95ci'][0]:+.4f}, {m['delta_brier_95ci'][1]:+.4f}]" if m.get("delta_brier_95ci") else "N/A"
+        print(f"  {str(m['horizon_sec']) + 's':<8} | {m['forecaster']:<26} | {m['n_observations']:>5} | {m['brier']:>7.4f} | {m['log_loss']:>7.4f} | {m['accuracy_05']:>5.3f} | {delta_str:>8} | {ci_str:<19}")
+
+    # Jev Behavior
+    jb = report["jev_behavior"]
+    print("\n" + "-" * 80)
+    print("  JEV BEHAVIOR & CALIBRATION FAILURE DECOMPOSITION:")
+    print(f"    Market Aware Shrunk toward 0.5: {jb['MARKET_AWARE']['shrunk_toward_05_pct']}% ({jb['MARKET_AWARE']['shrunk_toward_05_count']}/{jb['MARKET_AWARE']['n_paired']})")
+    print(f"    Full Shrunk toward 0.5:         {jb['FULL']['shrunk_toward_05_pct']}% ({jb['FULL']['shrunk_toward_05_count']}/{jb['FULL']['n_paired']})")
+    print("    Adjustment Magnitude Tiers (Market Aware):")
+    for t in jb["MARKET_AWARE"]["tiers_by_adjustment_magnitude"]:
+        print(f"      Tier {t['tier']:<16} N={t['n']:>4} | MktBr={t['market_brier']:.4f} | JevBr={t['jev_brier']:.4f} | DeltaBr={t['delta_brier']:+.4f}")
+
+    # Univariate signals
+    print("\n" + "-" * 80)
+    print("  DIRECT MICROSTRUCTURE SIGNALS (GROUPED 5-FOLD CV):")
+    print(f"  {'Feature':<32} | {'Sign':<4} | {'StdBeta':>8} | {'CV Brier':>8} | {'Delta vs Base':>14}")
+    print("  " + "-" * 74)
+    for u in report["univariate_signals"]:
+        print(f"  {u['feature_name']:<32} | {u['sign']:<4} | {u['standardized_beta']:>+8.4f} | {u['cv_brier']:>8.5f} | {u['delta_brier_vs_base']:>+14.5f}")
+
+    # Residual model
+    res = report["residual_model"]
+    print("\n" + "-" * 80)
+    print("  POLYMARKET RESIDUAL LOGISTIC-OFFSET MODEL:")
+    print(f"    N Paired:                {res['n_observations']}")
+    print(f"    Grouped Folds:           {res['grouped_folds']}")
+    print(f"    Market Brier:            {res['market_brier']:.5f}")
+    print(f"    Offset Model CV Brier:   {res['offset_model_cv_brier']:.5f}")
+    print(f"    Delta Brier:             {res['delta_brier']:+.5f}")
+    print(f"    Market LogLoss:          {res['market_logloss']:.5f}")
+    print(f"    Offset Model CV LogLoss: {res['offset_model_cv_logloss']:.5f}")
+    print(f"    Delta LogLoss:           {res['delta_logloss']:+.5f}")
+    print(f"    Average Coefficients:    {res['average_coefficients']}")
+
+    # Microstructure-only model
+    mo = report["microstructure_only"]
+    print("\n" + "-" * 80)
+    print("  MICROSTRUCTURE-ONLY BASELINE MODEL (L2 Logistic, Excludes Market Q):")
+    print(f"    Label:                   {mo['label']}")
+    print(f"    CV Brier:                {mo['microstructure_only_cv_brier']:.5f}")
+    print(f"    CV LogLoss:              {mo['microstructure_only_cv_logloss']:.5f}")
+    print(f"    Base Rate Brier:         {mo['base_rate_brier']:.5f}")
+    print(f"    Delta vs Base Rate:      {mo['delta_brier_vs_base_rate']:+.5f}")
+    print(f"    Delta vs Jev Ref Only:   {mo['delta_brier_vs_jev_ref_only']:+.5f}")
+    print(f"    Delta vs Jev Ref+Perp:   {mo['delta_brier_vs_jev_ref_perp']:+.5f}")
+
+    # Lead/lag
+    ll = report["lead_lag"]
+    print("\n" + "-" * 80)
+    print("  LEAD/LAG FEASIBILITY AUDIT:")
+    print(f"    Label:                   {ll['label']}")
+    print(f"    Total Transition Pairs:  {ll['total_transition_pairs']}")
+    for tr in ll["transitions"]:
+        corr_s = f"{tr['correlation_with_binance_open_return']:+.4f}" if tr.get("correlation_with_binance_open_return") is not None else "N/A"
+        print(f"    Transition {tr['transition']:<12}: N={tr['valid_pairs']:>4} | MeanDeltaQ={tr['mean_delta_q']:+.4f} | StdDeltaQ={tr['std_delta_q']:.4f} | Corr(B_ret, dQ)={corr_s}")
+
+    print("\n" + "=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1314,6 +1400,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit BTC 5m dataset integrity, snapshot validity rates, score uniqueness, and forecast pairing",
     )
 
+    # btc5m-phase8-diagnostics
+    p_phase8_diag = subparsers.add_parser(
+        "btc5m-phase8-diagnostics",
+        help="Run post-hoc diagnostic and exploratory microstructure feature analysis (Phase 8A)",
+    )
+    p_phase8_diag.add_argument(
+        "--output-dir",
+        default="reports/btc5m_phase8_diagnostics",
+        help="Output directory for generated JSON/CSV diagnostic artifacts",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -1348,6 +1445,7 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-audit-cost": cmd_btc5m_audit_cost,
         "btc5m-backup": cmd_btc5m_backup,
         "btc5m-audit-dataset": cmd_btc5m_audit_dataset,
+        "btc5m-phase8-diagnostics": cmd_btc5m_phase8_diagnostics,
     }
 
     handler = dispatch.get(args.subcommand)

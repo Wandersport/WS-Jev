@@ -1,0 +1,79 @@
+[
+  {
+    "feature_name": "ref_distance_to_beat_bps",
+    "source": "Chainlink 60s TWAP Streams (RTDS)",
+    "source_timestamp": "Opening tick priceToBeat vs point-in-time reference tick",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "ref_return_10s_bps",
+    "source": "Chainlink 60s TWAP Streams (RTDS)",
+    "source_timestamp": "Pre-horizon rolling buffer (10s lookback)",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "ref_return_30s_bps",
+    "source": "Chainlink 60s TWAP Streams (RTDS)",
+    "source_timestamp": "Pre-horizon rolling buffer (30s lookback)",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "ref_return_60s_bps",
+    "source": "Chainlink 60s TWAP Streams (RTDS)",
+    "source_timestamp": "Pre-horizon rolling buffer (60s lookback)",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "binance_return_since_open_bps",
+    "source": "Binance USD-M Perpetual BTCUSDT Feed",
+    "source_timestamp": "Sampled at round_open (tolerance <= 2500ms) vs horizon freeze",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "binance_basis_bps",
+    "source": "Binance Perpetual Mid vs Chainlink Reference Mid",
+    "source_timestamp": "Contemporaneous point-in-time difference",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "binance_microprice_offset_bps",
+    "source": "Binance L2 Depth (Top 5 Order Book Levels)",
+    "source_timestamp": "Frozen snapshot at horizon scheduled time",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "binance_top5_depth_imbalance",
+    "source": "Binance L2 Depth",
+    "source_timestamp": "Frozen snapshot at horizon scheduled time",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "binance_top20_depth_imbalance",
+    "source": "Binance L2 Depth",
+    "source_timestamp": "Frozen snapshot at horizon scheduled time",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "market_q",
+    "source": "Polymarket Native UP Token Orderbook",
+    "source_timestamp": "Point-in-time best bid / best ask midpoint",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  },
+  {
+    "feature_name": "poly_spread",
+    "source": "Polymarket Native UP Token Orderbook",
+    "source_timestamp": "Point-in-time spread (best ask - best bid)",
+    "available_at_forecast_time": "YES",
+    "uses_future_information": "NO"
+  }
+]

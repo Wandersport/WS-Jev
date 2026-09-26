@@ -1,0 +1,119 @@
+{
+  "n_observations": 1649,
+  "grouped_folds": 5,
+  "features_used": [
+    "binance_return_since_open_bps",
+    "binance_basis_bps",
+    "binance_microprice_offset_bps",
+    "binance_top5_depth_imbalance",
+    "ref_distance_to_beat_bps"
+  ],
+  "market_brier": 0.14047,
+  "offset_model_cv_brier": 0.1401,
+  "delta_brier": -0.00037,
+  "market_logloss": 0.42887,
+  "offset_model_cv_logloss": 0.42758,
+  "delta_logloss": -0.00129,
+  "average_coefficients": {
+    "intercept": -0.1122,
+    "binance_return_since_open_bps": 0.0028,
+    "binance_basis_bps": 0.2015,
+    "binance_microprice_offset_bps": -0.0155,
+    "binance_top5_depth_imbalance": 0.0136,
+    "ref_distance_to_beat_bps": 0.1497
+  },
+  "fold_results": [
+    {
+      "fold": 0,
+      "n_test": 320,
+      "market_brier": 0.14361,
+      "model_brier": 0.14214,
+      "delta_brier": -0.00147,
+      "market_logloss": 0.43933,
+      "model_logloss": 0.43547,
+      "delta_logloss": -0.00385
+    },
+    {
+      "fold": 1,
+      "n_test": 331,
+      "market_brier": 0.14374,
+      "model_brier": 0.14469,
+      "delta_brier": 0.00096,
+      "market_logloss": 0.43227,
+      "model_logloss": 0.43445,
+      "delta_logloss": 0.00217
+    },
+    {
+      "fold": 2,
+      "n_test": 349,
+      "market_brier": 0.13341,
+      "model_brier": 0.13284,
+      "delta_brier": -0.00057,
+      "market_logloss": 0.41368,
+      "model_logloss": 0.41031,
+      "delta_logloss": -0.00337
+    },
+    {
+      "fold": 3,
+      "n_test": 316,
+      "market_brier": 0.14024,
+      "model_brier": 0.13899,
+      "delta_brier": -0.00125,
+      "market_logloss": 0.43028,
+      "model_logloss": 0.42966,
+      "delta_logloss": -0.00062
+    },
+    {
+      "fold": 4,
+      "n_test": 333,
+      "market_brier": 0.14183,
+      "model_brier": 0.14224,
+      "delta_brier": 0.00041,
+      "market_logloss": 0.43001,
+      "model_logloss": 0.42928,
+      "delta_logloss": -0.00074
+    }
+  ],
+  "coefficients_by_fold": [
+    {
+      "intercept": -0.1216,
+      "binance_return_since_open_bps": 0.0096,
+      "binance_basis_bps": 0.1855,
+      "binance_microprice_offset_bps": 0.0286,
+      "binance_top5_depth_imbalance": -0.0108,
+      "ref_distance_to_beat_bps": 0.1244
+    },
+    {
+      "intercept": -0.0925,
+      "binance_return_since_open_bps": -0.1225,
+      "binance_basis_bps": 0.2945,
+      "binance_microprice_offset_bps": -0.0813,
+      "binance_top5_depth_imbalance": 0.0719,
+      "ref_distance_to_beat_bps": 0.2504
+    },
+    {
+      "intercept": -0.1449,
+      "binance_return_since_open_bps": -0.0181,
+      "binance_basis_bps": 0.1474,
+      "binance_microprice_offset_bps": -0.0194,
+      "binance_top5_depth_imbalance": 0.0146,
+      "ref_distance_to_beat_bps": 0.1762
+    },
+    {
+      "intercept": -0.1003,
+      "binance_return_since_open_bps": 0.0038,
+      "binance_basis_bps": 0.2223,
+      "binance_microprice_offset_bps": 0.0575,
+      "binance_top5_depth_imbalance": -0.0521,
+      "ref_distance_to_beat_bps": 0.166
+    },
+    {
+      "intercept": -0.1017,
+      "binance_return_since_open_bps": 0.1413,
+      "binance_basis_bps": 0.1576,
+      "binance_microprice_offset_bps": -0.0631,
+      "binance_top5_depth_imbalance": 0.0445,
+      "ref_distance_to_beat_bps": 0.0317
+    }
+  ]
+}

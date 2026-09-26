@@ -1,0 +1,412 @@
+{
+  "Native_Polymarket": [
+    {
+      "bin_index": 0,
+      "bin_range": "[0.0, 0.1)",
+      "n_observations": 218,
+      "mean_prediction": 0.0439,
+      "observed_frequency": 0.0183,
+      "calibration_error": 0.02552
+    },
+    {
+      "bin_index": 1,
+      "bin_range": "[0.1, 0.2)",
+      "n_observations": 138,
+      "mean_prediction": 0.1466,
+      "observed_frequency": 0.1014,
+      "calibration_error": 0.04518
+    },
+    {
+      "bin_index": 2,
+      "bin_range": "[0.2, 0.3)",
+      "n_observations": 132,
+      "mean_prediction": 0.251,
+      "observed_frequency": 0.2652,
+      "calibration_error": -0.01417
+    },
+    {
+      "bin_index": 3,
+      "bin_range": "[0.3, 0.4)",
+      "n_observations": 114,
+      "mean_prediction": 0.3477,
+      "observed_frequency": 0.3596,
+      "calibration_error": -0.01197
+    },
+    {
+      "bin_index": 4,
+      "bin_range": "[0.4, 0.5)",
+      "n_observations": 163,
+      "mean_prediction": 0.4496,
+      "observed_frequency": 0.3497,
+      "calibration_error": 0.09988
+    },
+    {
+      "bin_index": 5,
+      "bin_range": "[0.5, 0.6)",
+      "n_observations": 127,
+      "mean_prediction": 0.5509,
+      "observed_frequency": 0.5039,
+      "calibration_error": 0.04693
+    },
+    {
+      "bin_index": 6,
+      "bin_range": "[0.6, 0.7)",
+      "n_observations": 154,
+      "mean_prediction": 0.6551,
+      "observed_frequency": 0.6169,
+      "calibration_error": 0.03821
+    },
+    {
+      "bin_index": 7,
+      "bin_range": "[0.7, 0.8)",
+      "n_observations": 154,
+      "mean_prediction": 0.7531,
+      "observed_frequency": 0.7597,
+      "calibration_error": -0.00666
+    },
+    {
+      "bin_index": 8,
+      "bin_range": "[0.8, 0.9)",
+      "n_observations": 186,
+      "mean_prediction": 0.8519,
+      "observed_frequency": 0.8978,
+      "calibration_error": -0.046
+    },
+    {
+      "bin_index": 9,
+      "bin_range": "[0.9, 1.0)",
+      "n_observations": 263,
+      "mean_prediction": 0.9546,
+      "observed_frequency": 0.9582,
+      "calibration_error": -0.00358
+    }
+  ],
+  "BTC5M_REFERENCE_ONLY": [
+    {
+      "bin_index": 0,
+      "bin_range": "[0.0, 0.1)",
+      "n_observations": 0,
+      "mean_prediction": 0.05,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    },
+    {
+      "bin_index": 1,
+      "bin_range": "[0.1, 0.2)",
+      "n_observations": 0,
+      "mean_prediction": 0.15,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    },
+    {
+      "bin_index": 2,
+      "bin_range": "[0.2, 0.3)",
+      "n_observations": 1,
+      "mean_prediction": 0.29,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.29
+    },
+    {
+      "bin_index": 3,
+      "bin_range": "[0.3, 0.4)",
+      "n_observations": 292,
+      "mean_prediction": 0.3724,
+      "observed_frequency": 0.1644,
+      "calibration_error": 0.20801
+    },
+    {
+      "bin_index": 4,
+      "bin_range": "[0.4, 0.5)",
+      "n_observations": 428,
+      "mean_prediction": 0.4317,
+      "observed_frequency": 0.3084,
+      "calibration_error": 0.12327
+    },
+    {
+      "bin_index": 5,
+      "bin_range": "[0.5, 0.6)",
+      "n_observations": 121,
+      "mean_prediction": 0.5526,
+      "observed_frequency": 0.5455,
+      "calibration_error": 0.00719
+    },
+    {
+      "bin_index": 6,
+      "bin_range": "[0.6, 0.7)",
+      "n_observations": 800,
+      "mean_prediction": 0.6463,
+      "observed_frequency": 0.7425,
+      "calibration_error": -0.0962
+    },
+    {
+      "bin_index": 7,
+      "bin_range": "[0.7, 0.8)",
+      "n_observations": 8,
+      "mean_prediction": 0.7037,
+      "observed_frequency": 0.75,
+      "calibration_error": -0.04625
+    },
+    {
+      "bin_index": 8,
+      "bin_range": "[0.8, 0.9)",
+      "n_observations": 0,
+      "mean_prediction": 0.85,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    },
+    {
+      "bin_index": 9,
+      "bin_range": "[0.9, 1.0)",
+      "n_observations": 0,
+      "mean_prediction": 0.95,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    }
+  ],
+  "BTC5M_REFERENCE_PLUS_PERP": [
+    {
+      "bin_index": 0,
+      "bin_range": "[0.0, 0.1)",
+      "n_observations": 0,
+      "mean_prediction": 0.05,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    },
+    {
+      "bin_index": 1,
+      "bin_range": "[0.1, 0.2)",
+      "n_observations": 1,
+      "mean_prediction": 0.17,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.17
+    },
+    {
+      "bin_index": 2,
+      "bin_range": "[0.2, 0.3)",
+      "n_observations": 97,
+      "mean_prediction": 0.2689,
+      "observed_frequency": 0.0825,
+      "calibration_error": 0.18639
+    },
+    {
+      "bin_index": 3,
+      "bin_range": "[0.3, 0.4)",
+      "n_observations": 465,
+      "mean_prediction": 0.3456,
+      "observed_frequency": 0.2108,
+      "calibration_error": 0.13484
+    },
+    {
+      "bin_index": 4,
+      "bin_range": "[0.4, 0.5)",
+      "n_observations": 186,
+      "mean_prediction": 0.4313,
+      "observed_frequency": 0.4677,
+      "calibration_error": -0.03645
+    },
+    {
+      "bin_index": 5,
+      "bin_range": "[0.5, 0.6)",
+      "n_observations": 88,
+      "mean_prediction": 0.5599,
+      "observed_frequency": 0.5114,
+      "calibration_error": 0.04852
+    },
+    {
+      "bin_index": 6,
+      "bin_range": "[0.6, 0.7)",
+      "n_observations": 571,
+      "mean_prediction": 0.6514,
+      "observed_frequency": 0.6795,
+      "calibration_error": -0.02813
+    },
+    {
+      "bin_index": 7,
+      "bin_range": "[0.7, 0.8)",
+      "n_observations": 242,
+      "mean_prediction": 0.7155,
+      "observed_frequency": 0.9091,
+      "calibration_error": -0.19355
+    },
+    {
+      "bin_index": 8,
+      "bin_range": "[0.8, 0.9)",
+      "n_observations": 0,
+      "mean_prediction": 0.85,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    },
+    {
+      "bin_index": 9,
+      "bin_range": "[0.9, 1.0)",
+      "n_observations": 0,
+      "mean_prediction": 0.95,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    }
+  ],
+  "BTC5M_MARKET_AWARE": [
+    {
+      "bin_index": 0,
+      "bin_range": "[0.0, 0.1)",
+      "n_observations": 8,
+      "mean_prediction": 0.0875,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0875
+    },
+    {
+      "bin_index": 1,
+      "bin_range": "[0.1, 0.2)",
+      "n_observations": 286,
+      "mean_prediction": 0.1441,
+      "observed_frequency": 0.049,
+      "calibration_error": 0.09517
+    },
+    {
+      "bin_index": 2,
+      "bin_range": "[0.2, 0.3)",
+      "n_observations": 162,
+      "mean_prediction": 0.2462,
+      "observed_frequency": 0.216,
+      "calibration_error": 0.03019
+    },
+    {
+      "bin_index": 3,
+      "bin_range": "[0.3, 0.4)",
+      "n_observations": 112,
+      "mean_prediction": 0.3412,
+      "observed_frequency": 0.2946,
+      "calibration_error": 0.04652
+    },
+    {
+      "bin_index": 4,
+      "bin_range": "[0.4, 0.5)",
+      "n_observations": 134,
+      "mean_prediction": 0.4481,
+      "observed_frequency": 0.4552,
+      "calibration_error": -0.00716
+    },
+    {
+      "bin_index": 5,
+      "bin_range": "[0.5, 0.6)",
+      "n_observations": 180,
+      "mean_prediction": 0.5469,
+      "observed_frequency": 0.5111,
+      "calibration_error": 0.03578
+    },
+    {
+      "bin_index": 6,
+      "bin_range": "[0.6, 0.7)",
+      "n_observations": 321,
+      "mean_prediction": 0.6469,
+      "observed_frequency": 0.6417,
+      "calibration_error": 0.00517
+    },
+    {
+      "bin_index": 7,
+      "bin_range": "[0.7, 0.8)",
+      "n_observations": 394,
+      "mean_prediction": 0.7459,
+      "observed_frequency": 0.8934,
+      "calibration_error": -0.14749
+    },
+    {
+      "bin_index": 8,
+      "bin_range": "[0.8, 0.9)",
+      "n_observations": 53,
+      "mean_prediction": 0.8083,
+      "observed_frequency": 1.0,
+      "calibration_error": -0.1917
+    },
+    {
+      "bin_index": 9,
+      "bin_range": "[0.9, 1.0)",
+      "n_observations": 0,
+      "mean_prediction": 0.95,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    }
+  ],
+  "BTC5M_FULL": [
+    {
+      "bin_index": 0,
+      "bin_range": "[0.0, 0.1)",
+      "n_observations": 8,
+      "mean_prediction": 0.085,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.085
+    },
+    {
+      "bin_index": 1,
+      "bin_range": "[0.1, 0.2)",
+      "n_observations": 241,
+      "mean_prediction": 0.1504,
+      "observed_frequency": 0.0456,
+      "calibration_error": 0.10473
+    },
+    {
+      "bin_index": 2,
+      "bin_range": "[0.2, 0.3)",
+      "n_observations": 191,
+      "mean_prediction": 0.2423,
+      "observed_frequency": 0.199,
+      "calibration_error": 0.0433
+    },
+    {
+      "bin_index": 3,
+      "bin_range": "[0.3, 0.4)",
+      "n_observations": 123,
+      "mean_prediction": 0.3376,
+      "observed_frequency": 0.2846,
+      "calibration_error": 0.05309
+    },
+    {
+      "bin_index": 4,
+      "bin_range": "[0.4, 0.5)",
+      "n_observations": 115,
+      "mean_prediction": 0.4437,
+      "observed_frequency": 0.4174,
+      "calibration_error": 0.02626
+    },
+    {
+      "bin_index": 5,
+      "bin_range": "[0.5, 0.6)",
+      "n_observations": 188,
+      "mean_prediction": 0.5492,
+      "observed_frequency": 0.5106,
+      "calibration_error": 0.03856
+    },
+    {
+      "bin_index": 6,
+      "bin_range": "[0.6, 0.7)",
+      "n_observations": 311,
+      "mean_prediction": 0.6466,
+      "observed_frequency": 0.5916,
+      "calibration_error": 0.05498
+    },
+    {
+      "bin_index": 7,
+      "bin_range": "[0.7, 0.8)",
+      "n_observations": 375,
+      "mean_prediction": 0.7458,
+      "observed_frequency": 0.9067,
+      "calibration_error": -0.16085
+    },
+    {
+      "bin_index": 8,
+      "bin_range": "[0.8, 0.9)",
+      "n_observations": 98,
+      "mean_prediction": 0.8115,
+      "observed_frequency": 0.9592,
+      "calibration_error": -0.14765
+    },
+    {
+      "bin_index": 9,
+      "bin_range": "[0.9, 1.0)",
+      "n_observations": 0,
+      "mean_prediction": 0.95,
+      "observed_frequency": 0.0,
+      "calibration_error": 0.0
+    }
+  ]
+}

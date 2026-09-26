@@ -1,0 +1,30 @@
+{
+  "total_openrouter_cost_usd": 0.243008,
+  "recorded_forecast_cost_sum_usd": 0.242322,
+  "by_condition": {
+    "BTC5M_FULL": {
+      "count": 1650,
+      "cost_usd": 0.073423,
+      "input_tokens": 1748174,
+      "output_tokens": 85800
+    },
+    "BTC5M_MARKET_AWARE": {
+      "count": 1650,
+      "cost_usd": 0.060531,
+      "input_tokens": 1441204,
+      "output_tokens": 85800
+    },
+    "BTC5M_REFERENCE_ONLY": {
+      "count": 1650,
+      "cost_usd": 0.04753,
+      "input_tokens": 1130980,
+      "output_tokens": 85748
+    },
+    "BTC5M_REFERENCE_PLUS_PERP": {
+      "count": 1650,
+      "cost_usd": 0.060838,
+      "input_tokens": 1448535,
+      "output_tokens": 85800
+    }
+  }
+}

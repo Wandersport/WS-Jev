@@ -1,0 +1,81 @@
+{
+  "experiment_id": "btc5m_jev_ablation_v1",
+  "experiment_spec_hash": "78bad4ab38785772e0e42fd8329111699101e88896cd0dc56fc5204a8c3d085a",
+  "model_pinned": "typesafe/jev-1.13",
+  "status": "FROZEN_COMPLETED",
+  "scientific_conclusions": {
+    "primary": "JEV_UNDERPERFORMS_NATIVE_MARKET_BASELINE_IN_FROZEN_BTC5M_EXPERIMENT",
+    "reference_perp_finding": "BINANCE_FEATURES_IMPROVE_REFERENCE_ONLY_JEV_BUT_DO_NOT_OVERCOME_MARKET_BASELINE",
+    "market_aware_finding": "BINANCE_ADDS_NO_OBSERVED_INCREMENTAL_VALUE_ONCE_JEV_SEES_MARKET_PRICE"
+  },
+  "counts": {
+    "valid_resolved_rounds": 500,
+    "total_scored_round_horizons": 1650,
+    "paired_market_scored_rows": 1649,
+    "unpaired_market_scored_rows": 1,
+    "total_forecast_rows": 6600,
+    "physical_rounds_discovered": 844,
+    "physical_rounds_resolved": 844
+  },
+  "costs": {
+    "canonical_openrouter_cost_usd": 0.243008,
+    "recorded_forecast_cost_usd": 0.242322
+  },
+  "primary_aggregate_results": {
+    "polymarket_native_brier": 0.14047,
+    "polymarket_native_log_loss": 0.42887,
+    "conditions": {
+      "BTC5M_REFERENCE_ONLY": {
+        "brier": 0.20495,
+        "delta_brier": 0.06448,
+        "delta_brier_95ci": [
+          0.05723,
+          0.07133
+        ],
+        "log_loss": 0.60089,
+        "delta_log_loss": 0.17202
+      },
+      "BTC5M_REFERENCE_PLUS_PERP": {
+        "brier": 0.19096,
+        "delta_brier": 0.05049,
+        "delta_brier_95ci": [
+          0.04439,
+          0.05661
+        ],
+        "log_loss": 0.56982,
+        "delta_log_loss": 0.14095
+      },
+      "BTC5M_MARKET_AWARE": {
+        "brier": 0.15981,
+        "delta_brier": 0.01934,
+        "delta_brier_95ci": [
+          0.0158,
+          0.02315
+        ],
+        "log_loss": 0.49235,
+        "delta_log_loss": 0.06348
+      },
+      "BTC5M_FULL": {
+        "brier": 0.16107,
+        "delta_brier": 0.0206,
+        "delta_brier_95ci": [
+          0.01708,
+          0.02416
+        ],
+        "log_loss": 0.49592,
+        "delta_log_loss": 0.06705
+      }
+    },
+    "paired_deltas": {
+      "REF_PLUS_PERP_MINUS_REF_ONLY": -0.01403,
+      "FULL_MINUS_MARKET_AWARE": 0.00126,
+      "MARKET_AWARE_MINUS_REF_ONLY": -0.04519
+    }
+  },
+  "archive": {
+    "closing_commit": "e9091a3cb4be2501f6e4b1f81f3e601e1bc2f07b",
+    "git_tag": "btc5m-jev-ablation-v1-500r",
+    "checkpoint_file": "data/checkpoints/checkpoint_500r_20260926_073557.json",
+    "backup_file": "data/backups/pm_research_backup_20260926_073555_500r.db"
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "physical_rounds_discovered": 844,
+  "physical_rounds_resolved": 844,
+  "rounds_with_valid_snapshots": 500,
+  "total_snapshots": 3925,
+  "valid_snapshots": 1650,
+  "invalid_snapshots": 2275,
+  "skip_reasons": {
+    "SKIP_EXCESSIVE_TIMING_DRIFT": 6,
+    "SKIP_MISSING_MARKET_Q": 639,
+    "SKIP_NO_EXACT_ANCHOR": 1564,
+    "SKIP_STALE_REFERENCE": 66
+  },
+  "valid_by_horizon": {
+    "240s": 348,
+    "180s": 483,
+    "120s": 461,
+    "60s": 265,
+    "30s": 93
+  },
+  "duplicate_score_keys": 0,
+  "unpaired_market_score_rows": 1,
+  "total_scored_round_horizons": 1650,
+  "total_forecasts": 6600
+}
