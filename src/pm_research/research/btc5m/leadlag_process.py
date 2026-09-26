@@ -100,7 +100,7 @@ def start_leadlag_collector(
     proc = subprocess.Popen(
         cmd,
         stdout=log_fd,
-        stderr=subprocess.STREQUAL,
+        stderr=subprocess.STDOUT,
         start_new_session=True,  # Fully detached from Antigravity session
         close_fds=True,
     )
