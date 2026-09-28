@@ -1,0 +1,9 @@
+metric,n_observations,mean,p50,p90,p95,p99,min,max
+sample_actual_minus_target_ms,148125,5.45,5,10,10,10,0,11050
+binance_receipt_age_ms,148125,66.94,58,112,169,326,0,2982
+poly_receipt_age_ms,148125,20.23,6,33,62,320,0,2942
+binance_source_age_ms,148125,159.2,151,223,268,423,0,3621
+poly_source_age_ms_where_avail,3454,71.72,0,188,355,954,0,6141
+inter_feed_receive_skew_ms_valid,148125,62.81,49,106,176,379,0,2773
+inter_feed_receive_skew_ms_all,149461,453.53,49,109,185,484,0,294853
+source_to_receive_latency_ms,148125,159.2,151,223,268,423,0,3621

@@ -1,0 +1,6 @@
+reason_category,count,pct_of_invalid,description
+unpopulated_polymarket_book,614,45.96,"Both best bid and ask were None (e.g., initial token subscription transition / round start)"
+stale_polymarket_only,566,42.37,Receipt age > 3000ms on Polymarket CLOB WebSocket (feed quiet/disconnected)
+one_sided_polymarket_ask_only,80,5.99,"Best bid missing but best ask present (one-sided book, strictly invalid midpoint)"
+one_sided_polymarket_bid_only,72,5.39,"Best bid present but best ask missing (one-sided book, strictly invalid midpoint)"
+stale_both_feeds,4,0.3,Receipt age > 3000ms on both Polymarket and Binance feeds simultaneously

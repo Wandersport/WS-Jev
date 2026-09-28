@@ -1388,6 +1388,61 @@ def cmd_btc5m_leadlag_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_btc5m_leadlag_analyze(args: argparse.Namespace) -> int:
+    """Execute complete forensic audit and predeclared lead-lag analysis (Phase 8C.1)."""
+    from pm_research.research.btc5m.leadlag_analysis import generate_forensic_report_artifacts
+
+    db_path = args.db or "data/pm_research.db"
+    out_dir = getattr(args, "out_dir", "reports/btc5m_leadlag_v1_forensic")
+
+    print("\n" + "=" * 80)
+    print("  [!] BTC 5-MINUTE LEAD-LAG FORENSIC AUDIT & ANALYSIS (PHASE 8C.1)")
+    print(f"      Database:    {db_path}")
+    print(f"      Output Dir:  {out_dir}")
+    print("=" * 80)
+
+    summary = generate_forensic_report_artifacts(db_path=db_path, output_dir=out_dir)
+
+    print("\nFORENSIC MEASUREMENT SUMMARY:")
+    print(f"  Physical Rounds:      {summary['physical_rounds_total']} (Completed: {summary['physical_rounds_completed']})")
+    print(f"  Total 1s Samples:     {summary['total_samples']} (Valid: {summary['valid_samples']}, Invalid: {summary['invalid_samples']})")
+    print(f"  Stale Samples:        {summary['stale_samples']} ({summary['stale_samples']/summary['total_samples']*100:.2f}%)")
+    print(f"  Poly TS Coverage:     {summary['polymarket_source_timestamp_coverage_pct']:.2f}% (Price Changes Defect: CONFIRMED)")
+    print(f"  Binance TS Coverage:  {summary['binance_source_timestamp_coverage_pct']:.1f}%")
+    print(f"  Binance Trade Events: {summary['raw_binance_trade_events']} (Casing Bug: CONFIRMED, Taker Flow: INVALID)")
+
+    print("\nPREDECLARED B0 VS B1 LEAD-LAG EVALUATION (GroupKFold by Round):")
+    print(f"{'Lag':4s} | {'N':6s} | {'B0 MSE':8s} | {'B1 MSE':8s} | {'Delta MSE':10s} | {'95% CI Delta':21s} | {'B0 R2':7s} | {'B1 R2':7s} | {'B0 Acc':6s} | {'B1 Acc':6s} | {'Verdict':24s}")
+    print("-" * 125)
+    for row in summary["b0_b1_summary"]:
+        lag = row["lag_seconds"]
+        v = summary["salvageability_classification"].get(str(lag), "NO_INCREMENTAL_SIGNAL")
+        ci_str = f"[{row['delta_mse_95ci_low']:+.6f}, {row['delta_mse_95ci_high']:+.6f}]"
+        print(
+            f"{lag:2d}s  | {row['n_samples']:6d} | {row['b0_mse']:.6f} | {row['b1_mse']:.6f} | "
+            f"{row['delta_mse']:+10.6f} | {ci_str:21s} | {row['b0_r2']:+7.4f} | {row['b1_r2']:+7.4f} | "
+            f"{row['b0_direction_acc_nonzero']:5.1f}% | {row['b1_direction_acc_nonzero']:5.1f}% | {v:24s}"
+        )
+
+    print("\n[+] Report artifacts successfully written to:")
+    for f in [
+        "forensic_summary.json",
+        "feature_coverage.csv",
+        "invalid_reasons.csv",
+        "timing_distribution.csv",
+        "b0_b1_by_lag.csv",
+        "temporal_validation.csv",
+        "timing_sensitivity.csv",
+        "movement_frequency.csv",
+        "economic_scale_diagnostic.csv",
+        "README.md",
+    ]:
+        print(f"    - {Path(out_dir) / f}")
+
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -1650,6 +1705,17 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit lead-lag dataset quality, timestamp provenance, and offline target movements",
     )
 
+    # btc5m-leadlag-analyze
+    p_analyze = subparsers.add_parser(
+        "btc5m-leadlag-analyze",
+        help="Run comprehensive read-only forensic audit and predeclared lead-lag analysis (Phase 8C.1)",
+    )
+    p_analyze.add_argument(
+        "--out-dir",
+        default="reports/btc5m_leadlag_v1_forensic",
+        help="Directory to write analysis CSV/JSON/MD report artifacts",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -1690,6 +1756,7 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-leadlag-status": cmd_btc5m_leadlag_status,
         "btc5m-leadlag-stop": cmd_btc5m_leadlag_stop,
         "btc5m-leadlag-audit": cmd_btc5m_leadlag_audit,
+        "btc5m-leadlag-analyze": cmd_btc5m_leadlag_analyze,
     }
 
     handler = dispatch.get(args.subcommand)
