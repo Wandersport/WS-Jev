@@ -1,0 +1,7 @@
+confidence_threshold,n_acted,coverage_rate,conditional_accuracy
+0.0,480,1.0,0.3187
+0.5,115,0.2396,0.1565
+0.6,39,0.0813,0.0769
+0.7,6,0.0125,0.0
+0.8,0,0.0,0.0
+0.9,0,0.0,0.0

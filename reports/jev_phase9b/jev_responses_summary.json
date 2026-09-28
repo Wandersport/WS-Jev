@@ -1,0 +1,17 @@
+{
+  "requested_model": "typesafe/jev-1.13",
+  "returned_model": "typesafe/jev-1.13-20260917",
+  "total_eligible_samples": 480,
+  "n_api_calls": 0,
+  "n_cached_replays": 480,
+  "n_abstained": 0,
+  "n_acted": 480,
+  "coverage_rate": 1.0,
+  "total_cost_usd": 0.014617,
+  "latency_ms": {
+    "mean": 556.06,
+    "p50": 335.0,
+    "p95": 1187.0,
+    "p99": 2444.0
+  }
+}

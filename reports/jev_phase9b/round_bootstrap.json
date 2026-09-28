@@ -1,0 +1,85 @@
+{
+  "n_bootstraps": 1000,
+  "n_samples": 480,
+  "models": {
+    "typesafe/jev-1.13": {
+      "mean": 0.3199,
+      "ci_lower": 0.2792,
+      "ci_upper": 0.3604
+    },
+    "baseline_majority_base_rate": {
+      "mean": 0.8934,
+      "ci_lower": 0.8646,
+      "ci_upper": 0.9187
+    },
+    "baseline_deterministic_rule": {
+      "mean": 0.8892,
+      "ci_lower": 0.8625,
+      "ci_upper": 0.9167
+    },
+    "baseline_logistic_regression": {
+      "mean": 0.8977,
+      "ci_lower": 0.8688,
+      "ci_upper": 0.925
+    },
+    "baseline_ridge_logistic_l2_0.5": {
+      "mean": 0.8934,
+      "ci_lower": 0.8646,
+      "ci_upper": 0.9187
+    },
+    "baseline_random_seed_42": {
+      "mean": 0.4933,
+      "ci_lower": 0.4521,
+      "ci_upper": 0.5375
+    },
+    "baseline_always_abstain": {
+      "mean": 0.0,
+      "ci_lower": 0.0,
+      "ci_upper": 0.0
+    }
+  },
+  "paired_differences": {
+    "typesafe/jev-1.13_minus_baseline_majority_base_rate": {
+      "mean": -0.5735,
+      "ci_lower": -0.6271,
+      "ci_upper": -0.5146,
+      "p_jev_superior": 0.0,
+      "is_statistically_significant": true
+    },
+    "typesafe/jev-1.13_minus_baseline_deterministic_rule": {
+      "mean": -0.5693,
+      "ci_lower": -0.6229,
+      "ci_upper": -0.5104,
+      "p_jev_superior": 0.0,
+      "is_statistically_significant": true
+    },
+    "typesafe/jev-1.13_minus_baseline_logistic_regression": {
+      "mean": -0.5778,
+      "ci_lower": -0.6292,
+      "ci_upper": -0.5188,
+      "p_jev_superior": 0.0,
+      "is_statistically_significant": true
+    },
+    "typesafe/jev-1.13_minus_baseline_ridge_logistic_l2_0.5": {
+      "mean": -0.5735,
+      "ci_lower": -0.6271,
+      "ci_upper": -0.5146,
+      "p_jev_superior": 0.0,
+      "is_statistically_significant": true
+    },
+    "typesafe/jev-1.13_minus_baseline_random_seed_42": {
+      "mean": -0.1734,
+      "ci_lower": -0.2375,
+      "ci_upper": -0.1104,
+      "p_jev_superior": 0.0,
+      "is_statistically_significant": true
+    },
+    "typesafe/jev-1.13_minus_baseline_always_abstain": {
+      "mean": 0.3199,
+      "ci_lower": 0.2792,
+      "ci_upper": 0.3604,
+      "p_jev_superior": 1.0,
+      "is_statistically_significant": true
+    }
+  }
+}

@@ -1,0 +1,8 @@
+model_name,cohort,n_eligible,n_acted,n_abstained,coverage_rate,conditional_accuracy,effective_accuracy,balanced_accuracy,brier_score,log_loss,tp,fp,tn,fn
+typesafe/jev-1.13,all_eligible_480,480,480,0,1.0,0.3187,0.3187,0.5239,0.396248,1.038548,113,11,40,316
+baseline_majority_base_rate,all_eligible_480,480,480,0,1.0,0.8938,0.8938,0.5,0.10625,1.467899,429,51,0,0
+baseline_deterministic_rule,all_eligible_480,480,480,0,1.0,0.8896,0.8896,0.4977,0.117708,0.408987,427,51,0,2
+baseline_logistic_regression,all_eligible_480,480,480,0,1.0,0.8979,0.8979,0.5282,0.094778,0.351693,428,48,3,1
+baseline_ridge_logistic_l2_0.5,all_eligible_480,480,480,0,1.0,0.8938,0.8938,0.5,0.095568,0.343492,429,51,0,0
+baseline_random_seed_42,all_eligible_480,480,480,0,1.0,0.4938,0.4938,0.4317,0.25,0.693147,219,33,18,210
+baseline_always_abstain,all_eligible_480,480,0,480,0.0,0.0,0.0,0.0,N/A,N/A,0,0,0,0

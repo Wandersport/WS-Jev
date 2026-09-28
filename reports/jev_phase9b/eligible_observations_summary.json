@@ -1,0 +1,18 @@
+{
+  "total_rounds": 500,
+  "eligible_rounds": 480,
+  "excluded_rounds": 20,
+  "exclusion_reasons": {
+    "invalid_midpoint_or_spread": 17,
+    "microstructure_invalid_at_anchor": 1,
+    "anchor_beyond_tolerance": 2
+  },
+  "meaningful_move_count": 429,
+  "quiet_count": 51,
+  "base_rate_meaningful_move": 0.8938,
+  "splits": {
+    "train_count": 288,
+    "calibration_count": 96,
+    "holdout_count": 96
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "full_dataset": {
+    "model_name": "typesafe/jev-1.13",
+    "cohort_name": "all_eligible_480",
+    "n_eligible": 480,
+    "n_acted": 480,
+    "n_abstained": 0,
+    "coverage_rate": 1.0,
+    "abstention_rate": 0.0,
+    "conditional_accuracy": 0.3187,
+    "effective_accuracy": 0.3187,
+    "balanced_accuracy": 0.5239,
+    "confusion_matrix": {
+      "tp": 113,
+      "fp": 11,
+      "tn": 40,
+      "fn": 316,
+      "abstained": 0
+    },
+    "mean_brier_score": 0.396248,
+    "mean_log_loss": 1.038548,
+    "avg_latency_ms": 556.06,
+    "total_cost": 0.014617
+  },
+  "train_cohort": {
+    "model_name": "typesafe/jev-1.13",
+    "cohort_name": "train_60pct",
+    "n_eligible": 288,
+    "n_acted": 288,
+    "n_abstained": 0,
+    "coverage_rate": 1.0,
+    "abstention_rate": 0.0,
+    "conditional_accuracy": 0.2986,
+    "effective_accuracy": 0.2986,
+    "balanced_accuracy": 0.5508,
+    "confusion_matrix": {
+      "tp": 58,
+      "fp": 4,
+      "tn": 28,
+      "fn": 198,
+      "abstained": 0
+    },
+    "mean_brier_score": 0.374799,
+    "mean_log_loss": 0.987554,
+    "avg_latency_ms": null,
+    "total_cost": 0.008748
+  },
+  "calibration_cohort": {
+    "model_name": "typesafe/jev-1.13",
+    "cohort_name": "calibration_20pct",
+    "n_eligible": 96,
+    "n_acted": 96,
+    "n_abstained": 0,
+    "coverage_rate": 1.0,
+    "abstention_rate": 0.0,
+    "conditional_accuracy": 0.3125,
+    "effective_accuracy": 0.3125,
+    "balanced_accuracy": 0.5556,
+    "confusion_matrix": {
+      "tp": 25,
+      "fp": 1,
+      "tn": 5,
+      "fn": 65,
+      "abstained": 0
+    },
+    "mean_brier_score": 0.440428,
+    "mean_log_loss": 1.138895,
+    "avg_latency_ms": null,
+    "total_cost": 0.002931
+  },
+  "retrospective_holdout": {
+    "model_name": "typesafe/jev-1.13",
+    "cohort_name": "retrospective_holdout_20pct",
+    "n_eligible": 96,
+    "n_acted": 96,
+    "n_abstained": 0,
+    "coverage_rate": 1.0,
+    "abstention_rate": 0.0,
+    "conditional_accuracy": 0.3854,
+    "effective_accuracy": 0.3854,
+    "balanced_accuracy": 0.45,
+    "confusion_matrix": {
+      "tp": 30,
+      "fp": 6,
+      "tn": 7,
+      "fn": 53,
+      "abstained": 0
+    },
+    "mean_brier_score": 0.416414,
+    "mean_log_loss": 1.091183,
+    "avg_latency_ms": null,
+    "total_cost": 0.002938
+  }
+}

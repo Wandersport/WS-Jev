@@ -1845,6 +1845,63 @@ def cmd_jev_lab_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_phase9b_run(args: argparse.Namespace) -> int:
+    """Execute Phase 9B setup-gating benchmark on retrospective btc5m_leadlag_v1 data."""
+    import time
+
+    from pm_research.research.jev_phase9b import (
+        Phase9bDataset,
+        Phase9bRunner,
+        generate_phase9b_reports,
+    )
+
+    db_path = getattr(args, "db", None) or "data/pm_research.db"
+    out_dir = getattr(args, "output_dir", None) or "reports/jev_phase9b"
+    dry_run = getattr(args, "dry_run", False)
+
+    print("\n" + "=" * 80)
+    print("  [!] PHASE 9B — JEV SETUP-GATING RETROSPECTIVE BENCHMARK")
+    print(f"      Database: {db_path}")
+    print(f"      Reports:  {out_dir}")
+    print(f"      Mode:     {'DRY_RUN (no API calls)' if dry_run else 'LIVE_RESEARCH_BENCHMARK'}")
+    print("=" * 80)
+
+    dataset = Phase9bDataset.load_from_db(db_path)
+    summary = dataset.summary()
+    print("\nDATASET EXTRACTION SUMMARY:")
+    print(f"  Total physical rounds:     {summary['total_rounds']}")
+    print(f"  Eligible observations:     {summary['eligible_rounds']}")
+    print(f"  Excluded rounds:           {summary['excluded_rounds']}")
+    print(f"  Exclusion breakdown:       {summary['exclusion_reasons']}")
+    print(f"  Meaningful moves (>=spread): {summary['meaningful_move_count']} ({summary['base_rate_meaningful_move']*100:.1f}%)")
+    print(f"  Quiet rounds (<spread):     {summary['quiet_count']}")
+    print(f"  Chronological splits:      {summary['splits']}")
+
+    runner = Phase9bRunner(db_path=db_path)
+    print("\nRunning benchmark across Baselines and TypeSafe Jev...")
+    t0 = time.time()
+    results = runner.run_benchmark(dataset, dry_run=dry_run)
+    elapsed = time.time() - t0
+
+    print(f"\nEXECUTION COMPLETE ({elapsed:.1f}s):")
+    print(f"  API Calls Made:            {results['n_api_calls']}")
+    print(f"  Cached Replays:            {results['n_cached_replays']}")
+    print(f"  Cumulative Cost:           ${results['cumulative_cost']:.6f}")
+    print(f"  Returned Model:            {results['returned_model_id']}")
+    print(f"  Avg Latency:               {results['avg_latency_ms']} ms")
+
+    print(f"\nGenerating reports in {out_dir}...")
+    reports = generate_phase9b_reports(out_dir, dataset, results)
+    for k, p in reports.items():
+        print(f"  [SAVED] {k:24s} -> {p}")
+
+    print("\n" + "=" * 80)
+    print("  Phase 9B benchmark completed successfully.")
+    print("  SMOKE/BENCHMARK RESULTS ARE NOT TRADING EVIDENCE.")
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2208,6 +2265,14 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit Jev Decision Lab evaluations, task definitions, and multiple-testing ledger",
     )
 
+    # jev-phase9b-run (Phase 9B)
+    p_p9b = subparsers.add_parser(
+        "jev-phase9b-run",
+        help="Execute Phase 9B setup-gating benchmark on retrospective btc5m_leadlag_v1 data",
+    )
+    p_p9b.add_argument("--dry-run", action="store_true", help="Evaluate dataset and baselines without calling OpenRouter API")
+    p_p9b.add_argument("--output-dir", default="reports/jev_phase9b", help="Output directory for Phase 9B reports")
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -2257,6 +2322,7 @@ def main(argv: list[str] | None = None) -> int:
         "jev-lab-status": cmd_jev_lab_status,
         "jev-lab-smoke": cmd_jev_lab_smoke,
         "jev-lab-audit": cmd_jev_lab_audit,
+        "jev-phase9b-run": cmd_jev_phase9b_run,
     }
 
     handler = dispatch.get(args.subcommand)

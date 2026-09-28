@@ -1,0 +1,16 @@
+{
+  "task_id": "meaningful_poly_move_30s_v1",
+  "spec_hash": "2b8dd4f5d3eb91fb2227c3bb2bc40ed38e1f4b114e40fd53b4f3279bfba79109",
+  "total_hypotheses_attempted": 1,
+  "total_variants_attempted": 1,
+  "variants": [
+    {
+      "variant_id": "primary_30s_120s_anchor",
+      "horizon": "30s",
+      "anchor_seconds_remaining": 120,
+      "n_eligible": 480,
+      "status": "EVALUATED"
+    }
+  ],
+  "bonferroni_adjusted_alpha_5pct": 0.05
+}

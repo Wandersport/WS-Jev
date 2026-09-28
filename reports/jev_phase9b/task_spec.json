@@ -1,0 +1,43 @@
+{
+  "task_id": "meaningful_poly_move_30s_v1",
+  "task_version": "1.0.0",
+  "task_spec_hash": "2b8dd4f5d3eb91fb2227c3bb2bc40ed38e1f4b114e40fd53b4f3279bfba79109",
+  "target_horizon": "30s",
+  "anchor_seconds_remaining": 120,
+  "anchor_tolerance_seconds": 10,
+  "prompt_instructions": "Given only the current market state, classify whether the native Polymarket UP midpoint will make an absolute move at least as large as its current spread within the next 30 seconds.",
+  "criteria": {
+    "MEANINGFUL_MOVE": "The absolute change in Polymarket UP midpoint over the next 30 seconds is greater than or equal to the current bid-ask spread: |q_(t+30s) - q_t| >= s_t.",
+    "QUIET": "The absolute change in Polymarket UP midpoint over the next 30 seconds is strictly less than the current bid-ask spread: |q_(t+30s) - q_t| < s_t.",
+    "ABSTAIN": "Abstain from choosing an active label due to high uncertainty, ambiguity, or noisy microstructure."
+  },
+  "poly_features": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s"
+  ],
+  "binance_features": [
+    "binance_mid_price",
+    "binance_spread_bps",
+    "binance_microprice_offset_bps",
+    "binance_top1_depth_imbalance",
+    "binance_top5_depth_imbalance",
+    "binance_top20_depth_imbalance",
+    "binance_return_since_open_bps",
+    "binance_return_1s_bps",
+    "binance_return_2s_bps",
+    "binance_return_3s_bps",
+    "binance_return_5s_bps",
+    "binance_return_10s_bps",
+    "binance_return_30s_bps",
+    "binance_return_60s_bps"
+  ],
+  "role": "SETUP_GATING_DEVELOPMENT_BENCHMARK",
+  "profitability_claims": "NONE (Pure scientific classification benchmark)"
+}
