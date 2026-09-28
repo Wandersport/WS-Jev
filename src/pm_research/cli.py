@@ -1927,6 +1927,55 @@ def cmd_jev_phase9b_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_phase9b_probability_audit(args: argparse.Namespace) -> int:
+    """Execute Phase 9B.2 final Jev probability integrity audit on existing btc5m_leadlag_v1 data."""
+    from pm_research.research.jev_phase9b_audit import generate_phase9b_probability_audit_reports
+
+    db_path = getattr(args, "db", None) or "data/pm_research.db"
+    out_dir = getattr(args, "output_dir", None) or "reports/jev_phase9b_probability_audit"
+
+    print("\n" + "=" * 80)
+    print("  [!] PHASE 9B.2 — FINAL JEV PROBABILITY INTEGRITY AUDIT")
+    print(f"      Database: {db_path}")
+    print(f"      Reports:  {out_dir}")
+    print("      API Mode: STRICT ZERO-CALL AUDIT (cached responses only)")
+    print("=" * 80)
+
+    reports = generate_phase9b_probability_audit_reports(output_dir=out_dir, db_path=db_path)
+    for k, p in reports.items():
+        print(f"  [SAVED] {k:32s} -> {p}")
+
+    print("\n" + "=" * 80)
+    print("  Phase 9B.2 probability audit completed successfully.")
+    print("  ALL RESULTS STRICTLY RETROSPECTIVE DEVELOPMENT DATA.")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_jev_phase9c_preregister(args: argparse.Namespace) -> int:
+    """Generate frozen Phase 9C preregistration manifests and cryptographic hashes."""
+    from pm_research.research.jev_phase9c import generate_phase9c_preregistration_artifacts
+
+    out_dir = getattr(args, "output_dir", None) or "reports/jev_phase9c_preregistration"
+
+    print("\n" + "=" * 80)
+    print("  [!] PHASE 9C — PROSPECTIVE PROTOCOL PREREGISTRATION")
+    print(f"      Reports:  {out_dir}")
+    print("      Execution: ZERO (positions=0, fills=0, orders=0, PaperBroker=0)")
+    print("      API Mode:  ZERO-CALL PREREGISTRATION (manifest generation only)")
+    print("=" * 80)
+
+    reports = generate_phase9c_preregistration_artifacts(output_dir=out_dir)
+    for k, p in reports.items():
+        print(f"  [SAVED] {k:32s} -> {p}")
+
+    print("\n" + "=" * 80)
+    print("  Phase 9C preregistration completed successfully.")
+    print("  ALL CANDIDATE TASKS AND CRITERIA CRYPTOGRAPHICALLY FROZEN.")
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2305,6 +2354,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_p9b_audit.add_argument("--output-dir", default="reports/jev_phase9b_audit", help="Output directory for Phase 9B.1 audit reports")
 
+    # jev-phase9b-probability-audit (Phase 9B.2)
+    p_p9b_prob_audit = subparsers.add_parser(
+        "jev-phase9b-probability-audit",
+        help="Execute Phase 9B.2 final Jev probability integrity audit on existing btc5m_leadlag_v1 data",
+    )
+    p_p9b_prob_audit.add_argument("--output-dir", default="reports/jev_phase9b_probability_audit", help="Output directory for Phase 9B.2 audit reports")
+
+    # jev-phase9c-preregister (Phase 9C)
+    p_p9c_pre = subparsers.add_parser(
+        "jev-phase9c-preregister",
+        help="Generate frozen Phase 9C preregistration manifests and cryptographic hashes",
+    )
+    p_p9c_pre.add_argument("--output-dir", default="reports/jev_phase9c_preregistration", help="Output directory for Phase 9C preregistration")
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -2356,6 +2419,8 @@ def main(argv: list[str] | None = None) -> int:
         "jev-lab-audit": cmd_jev_lab_audit,
         "jev-phase9b-run": cmd_jev_phase9b_run,
         "jev-phase9b-audit": cmd_jev_phase9b_audit,
+        "jev-phase9b-probability-audit": cmd_jev_phase9b_probability_audit,
+        "jev-phase9c-preregister": cmd_jev_phase9c_preregister,
     }
 
     handler = dispatch.get(args.subcommand)

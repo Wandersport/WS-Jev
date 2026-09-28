@@ -1,0 +1,32 @@
+{
+  "manifest_type": "viability_rules",
+  "version": "1.0.0",
+  "description": "Minimum data quality, sample representation, and structural safety gates",
+  "gates": {
+    "sample_size": {
+      "min_observations_task_a": 200,
+      "min_qualifying_rounds_task_b": 100,
+      "min_observations_task_c": 200
+    },
+    "class_balance": {
+      "min_class_representation_pct": 10.0,
+      "rule": "If any required active class has < 10% representation in holdout, evaluation halts as DEGENERATE_BASE_RATE."
+    },
+    "microstructure_integrity": {
+      "min_polymarket_source_ts_pct": 95.0,
+      "min_binance_source_ts_pct": 99.0,
+      "min_taker_flow_coverage_post_warmup_pct": 95.0
+    }
+  },
+  "structural_execution_mandates": {
+    "strictly_paper_research": true,
+    "live_trading_capability": false,
+    "paper_broker_calls": 0,
+    "orders": 0,
+    "fills": 0,
+    "positions": 0,
+    "pnl": 0.0,
+    "note": "Phase 9C evaluates probabilistic forecasting quality only; it does not simulate order execution."
+  },
+  "sha256": "0af49ccbe05a697bea7bb584c079f688bf743f803635ab9a499a153b3907565d"
+}

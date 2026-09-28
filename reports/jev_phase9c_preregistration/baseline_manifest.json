@@ -1,0 +1,60 @@
+{
+  "manifest_type": "baseline_manifest",
+  "version": "1.0.0",
+  "description": "Preregistered transparent and statistical baselines for prospective evaluation",
+  "training_policy": "Strict chronological training on Development cohort (rounds 1-300) only; zero leakage",
+  "baselines": {
+    "poly_displacement_regime_30s_v2": [
+      {
+        "name": "MajorityBaseRate",
+        "type": "TRIVIAL_EMPIRICAL",
+        "description": "Predicts the empirical majority class from the 300 development rounds."
+      },
+      {
+        "name": "StandardizedLogisticRegression",
+        "type": "PARAMETRIC_STATISTICAL",
+        "description": "L2-regularized multinomial logistic regression on standardized microstructure features."
+      },
+      {
+        "name": "RollingTakerFlowHeuristic",
+        "type": "DOMAIN_HEURISTIC",
+        "description": "Signs and thresholds rolling 5s Binance USD-M aggressive taker imbalance."
+      }
+    ],
+    "cross_venue_lead_coherent_10s_v2": [
+      {
+        "name": "MajorityBaseRate",
+        "type": "TRIVIAL_EMPIRICAL",
+        "description": "Predicts empirical base rate of lead coherence from development trigger events."
+      },
+      {
+        "name": "MicropriceDislocationSignMatch",
+        "type": "DOMAIN_HEURISTIC",
+        "description": "Predicts COHERENT whenever dislocation magnitude exceeds empirical 75th percentile."
+      },
+      {
+        "name": "StandardizedLogisticRegression",
+        "type": "PARAMETRIC_STATISTICAL",
+        "description": "L2-regularized logistic regression using book depth imbalance and dislocation magnitude."
+      }
+    ],
+    "short_horizon_regime_60s_v2": [
+      {
+        "name": "MedianBaseRate",
+        "type": "TRIVIAL_EMPIRICAL",
+        "description": "Predicts uniform 50% probability based on median split construction."
+      },
+      {
+        "name": "PriorWindowVolatilityPersistence",
+        "type": "AUTOREGRESSIVE_HEURISTIC",
+        "description": "Predicts high volatility if prior 60s volatility was above median."
+      },
+      {
+        "name": "StandardizedLogisticRegression",
+        "type": "PARAMETRIC_STATISTICAL",
+        "description": "L2-regularized logistic regression on trade arrival count and top-book spread."
+      }
+    ]
+  },
+  "sha256": "2db47b4476cd51a545585cd380eebe6c89b114ea7c1acea187d9d72da47d88e1"
+}

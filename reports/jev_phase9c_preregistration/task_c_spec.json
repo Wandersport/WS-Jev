@@ -1,0 +1,66 @@
+{
+  "task_id": "short_horizon_regime_60s_v2",
+  "task_version": "2.0.0",
+  "task_type": "VOLATILITY_REGIME_CLASSIFICATION",
+  "description": "Predict whether the next 60s will exhibit high or low realized volatility.",
+  "anchor_seconds_remaining": 120,
+  "anchor_tolerance_seconds": 10,
+  "horizon_seconds": 60,
+  "metric": "Synchronized 1-second Binance mid return standard deviation over 60s",
+  "threshold": "Frozen empirical median of development split (rounds 1-300)",
+  "active_choices": [
+    "HIGH_VOLATILITY",
+    "LOW_VOLATILITY"
+  ],
+  "all_choices": [
+    "HIGH_VOLATILITY",
+    "LOW_VOLATILITY",
+    "ABSTAIN"
+  ],
+  "abstain_allowed": true,
+  "label_criteria": {
+    "HIGH_VOLATILITY": "sigma_60s > Median_train(sigma_60s)",
+    "LOW_VOLATILITY": "sigma_60s <= Median_train(sigma_60s)",
+    "ABSTAIN": "Abstain due to high ambiguity or noisy microstructure"
+  },
+  "feature_fields": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s",
+    "binance_mid_price",
+    "binance_spread_bps",
+    "binance_microprice_offset_bps",
+    "binance_top1_depth_imbalance",
+    "binance_top5_depth_imbalance",
+    "binance_top20_depth_imbalance",
+    "binance_return_since_open_bps",
+    "binance_return_1s_bps",
+    "binance_return_2s_bps",
+    "binance_return_3s_bps",
+    "binance_return_5s_bps",
+    "binance_return_10s_bps",
+    "binance_return_30s_bps",
+    "binance_return_60s_bps",
+    "binance_taker_flow_1s",
+    "binance_taker_flow_2s",
+    "binance_taker_flow_3s",
+    "binance_taker_flow_5s",
+    "binance_taker_flow_10s",
+    "binance_taker_flow_30s",
+    "binance_taker_flow_60s"
+  ],
+  "zero_execution_constraints": {
+    "positions": 0,
+    "orders": 0,
+    "fills": 0,
+    "pnl": 0.0,
+    "paper_broker_calls": 0
+  },
+  "sha256": "5a9ab2e88000d30e2d2af653994a54d6d078210194a5900f7e779328071d3a4b"
+}

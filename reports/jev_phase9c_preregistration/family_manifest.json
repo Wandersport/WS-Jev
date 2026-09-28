@@ -1,0 +1,28 @@
+{
+  "family_id": "jev_phase9c_prospective_family_v2",
+  "family_version": "1.0.0",
+  "status": "PREREGISTERED_FROZEN",
+  "target_dataset": "btc5m_leadlag_v2",
+  "tasks": [
+    "poly_displacement_regime_30s_v2",
+    "cross_venue_lead_coherent_10s_v2",
+    "short_horizon_regime_60s_v2"
+  ],
+  "component_hashes": {
+    "task_a_spec": "6f14dddc8ccb8b6dc6c7e7fe022d08311159fa38bc455901c60f66583e10aac3",
+    "task_b_spec": "cb051016b8fa3d97b49f97652a764da5126e232f6456af61a60dddf056922671",
+    "task_c_spec": "5a9ab2e88000d30e2d2af653994a54d6d078210194a5900f7e779328071d3a4b",
+    "baseline_manifest": "2db47b4476cd51a545585cd380eebe6c89b114ea7c1acea187d9d72da47d88e1",
+    "api_budget": "02829a9d73200756533b539d5fe21cda2b365e6022e226df7c0557cd1b0eed67",
+    "viability_rules": "0af49ccbe05a697bea7bb584c079f688bf743f803635ab9a499a153b3907565d",
+    "evaluation_plan": "e19a8cc65ddd3217d7ff9731a6c484391898db33a1ea4cb9034feff467817859"
+  },
+  "family_sha256": "3c773ae8c140be4a6af14be2be234e040ee94aa1c3c3e1baf07441edba1cc44a",
+  "execution_safety": {
+    "positions": 0,
+    "orders": 0,
+    "fills": 0,
+    "paper_broker_calls": 0,
+    "live_trading_capability": false
+  }
+}

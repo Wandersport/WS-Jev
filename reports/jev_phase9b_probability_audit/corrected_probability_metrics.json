@@ -1,0 +1,170 @@
+{
+  "full_dataset": {
+    "n_samples": 480,
+    "discrete_metrics": {
+      "accuracy": 0.3187,
+      "balanced_accuracy": 0.5239,
+      "sensitivity_meaningful_recall": 0.2634,
+      "specificity_quiet_recall": 0.7843,
+      "macro_f1": 0.3026,
+      "mcc": 0.0336,
+      "tp": 113,
+      "fp": 11,
+      "tn": 40,
+      "fn": 316
+    },
+    "probabilistic_metrics": {
+      "canonical_active_class_conditional": {
+        "formula": "p_meaningful_cond = p_M / (p_M + p_Q)",
+        "brier_score": 0.395181,
+        "log_loss": 1.0468
+      },
+      "unconditional_raw": {
+        "formula": "p_meaningful_uncond = p_M",
+        "note": "Assigns remaining probability mass to ABSTAIN outside binary label set",
+        "brier_score": 0.451803,
+        "log_loss": 1.18758
+      },
+      "historical_versions": {
+        "phase_9b_naive": {
+          "status": "INVALID",
+          "flaw": "Treated confidence directly as P(MEANINGFUL_MOVE) regardless of choice",
+          "brier_score": 0.396248,
+          "log_loss": 1.038548
+        },
+        "phase_9b1_confidence_converted": {
+          "status": "SUPERSEDED",
+          "flaw": "Used confidence as probability proxy instead of reading raw probabilities",
+          "brier_score": 0.284581,
+          "log_loss": 0.782828
+        }
+      }
+    }
+  },
+  "train_60pct": {
+    "n_samples": 288,
+    "discrete_metrics": {
+      "accuracy": 0.2986,
+      "balanced_accuracy": 0.5508,
+      "sensitivity_meaningful_recall": 0.2266,
+      "specificity_quiet_recall": 0.875,
+      "macro_f1": 0.2909,
+      "mcc": 0.0777,
+      "tp": 58,
+      "fp": 4,
+      "tn": 28,
+      "fn": 198
+    },
+    "probabilistic_metrics": {
+      "canonical_active_class_conditional": {
+        "formula": "p_meaningful_cond = p_M / (p_M + p_Q)",
+        "brier_score": 0.41771,
+        "log_loss": 1.105981
+      },
+      "unconditional_raw": {
+        "formula": "p_meaningful_uncond = p_M",
+        "note": "Assigns remaining probability mass to ABSTAIN outside binary label set",
+        "brier_score": 0.471739,
+        "log_loss": 1.244484
+      },
+      "historical_versions": {
+        "phase_9b_naive": {
+          "status": "INVALID",
+          "flaw": "Treated confidence directly as P(MEANINGFUL_MOVE) regardless of choice",
+          "brier_score": 0.374799,
+          "log_loss": 0.987554
+        },
+        "phase_9b1_confidence_converted": {
+          "status": "SUPERSEDED",
+          "flaw": "Used confidence as probability proxy instead of reading raw probabilities",
+          "brier_score": 0.28848,
+          "log_loss": 0.789206
+        }
+      }
+    }
+  },
+  "calibration_20pct": {
+    "n_samples": 96,
+    "discrete_metrics": {
+      "accuracy": 0.3125,
+      "balanced_accuracy": 0.5556,
+      "sensitivity_meaningful_recall": 0.2778,
+      "specificity_quiet_recall": 0.8333,
+      "macro_f1": 0.2813,
+      "mcc": 0.0605,
+      "tp": 25,
+      "fp": 1,
+      "tn": 5,
+      "fn": 65
+    },
+    "probabilistic_metrics": {
+      "canonical_active_class_conditional": {
+        "formula": "p_meaningful_cond = p_M / (p_M + p_Q)",
+        "brier_score": 0.374398,
+        "log_loss": 0.981817
+      },
+      "unconditional_raw": {
+        "formula": "p_meaningful_uncond = p_M",
+        "note": "Assigns remaining probability mass to ABSTAIN outside binary label set",
+        "brier_score": 0.438985,
+        "log_loss": 1.135003
+      },
+      "historical_versions": {
+        "phase_9b_naive": {
+          "status": "INVALID",
+          "flaw": "Treated confidence directly as P(MEANINGFUL_MOVE) regardless of choice",
+          "brier_score": 0.440428,
+          "log_loss": 1.138895
+        },
+        "phase_9b1_confidence_converted": {
+          "status": "SUPERSEDED",
+          "flaw": "Used confidence as probability proxy instead of reading raw probabilities",
+          "brier_score": 0.272303,
+          "log_loss": 0.759672
+        }
+      }
+    }
+  },
+  "retrospective_holdout_20pct": {
+    "n_samples": 96,
+    "discrete_metrics": {
+      "accuracy": 0.3854,
+      "balanced_accuracy": 0.45,
+      "sensitivity_meaningful_recall": 0.3614,
+      "specificity_quiet_recall": 0.5385,
+      "macro_f1": 0.348,
+      "mcc": -0.0707,
+      "tp": 30,
+      "fp": 6,
+      "tn": 7,
+      "fn": 53
+    },
+    "probabilistic_metrics": {
+      "canonical_active_class_conditional": {
+        "formula": "p_meaningful_cond = p_M / (p_M + p_Q)",
+        "brier_score": 0.348376,
+        "log_loss": 0.934242
+      },
+      "unconditional_raw": {
+        "formula": "p_meaningful_uncond = p_M",
+        "note": "Assigns remaining probability mass to ABSTAIN outside binary label set",
+        "brier_score": 0.404816,
+        "log_loss": 1.069447
+      },
+      "historical_versions": {
+        "phase_9b_naive": {
+          "status": "INVALID",
+          "flaw": "Treated confidence directly as P(MEANINGFUL_MOVE) regardless of choice",
+          "brier_score": 0.416414,
+          "log_loss": 1.091183
+        },
+        "phase_9b1_confidence_converted": {
+          "status": "SUPERSEDED",
+          "flaw": "Used confidence as probability proxy instead of reading raw probabilities",
+          "brier_score": 0.285164,
+          "log_loss": 0.786852
+        }
+      }
+    }
+  }
+}

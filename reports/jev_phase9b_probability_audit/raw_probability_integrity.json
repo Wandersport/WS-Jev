@@ -1,0 +1,24 @@
+{
+  "task_id": "meaningful_poly_move_30s_v1",
+  "responses_checked": 480,
+  "full_vectors_present": 480,
+  "missing_vectors": 0,
+  "invalid_vectors": 0,
+  "choice_count_k": 3,
+  "choices_present": [
+    "ABSTAIN",
+    "MEANINGFUL_MOVE",
+    "QUIET"
+  ],
+  "max_vector_sum_error": 0.01,
+  "median_vector_sum_error": 0.0,
+  "formula_validation": {
+    "formula_confirmed": true,
+    "formula_definition": "confidence = (p_chosen - 1/K) / (1 - 1/K)",
+    "k_value": 3,
+    "max_formula_error": 0.015,
+    "median_formula_error": 0.005,
+    "scalar_confidence_used_as_probability": false
+  },
+  "status": "PASS"
+}

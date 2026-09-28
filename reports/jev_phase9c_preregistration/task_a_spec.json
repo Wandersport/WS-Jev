@@ -1,0 +1,68 @@
+{
+  "task_id": "poly_displacement_regime_30s_v2",
+  "task_version": "2.0.0",
+  "task_type": "MICROSTRUCTURE_REGIME_CLASSIFICATION",
+  "description": "Predict whether Polymarket midpoint moves by at least the half-spread over next 30s.",
+  "anchor_seconds_remaining": 120,
+  "anchor_tolerance_seconds": 10,
+  "target_horizon_seconds": 30,
+  "active_choices": [
+    "UP_DISPLACEMENT",
+    "DOWN_DISPLACEMENT",
+    "BENIGN"
+  ],
+  "all_choices": [
+    "UP_DISPLACEMENT",
+    "DOWN_DISPLACEMENT",
+    "BENIGN",
+    "ABSTAIN"
+  ],
+  "abstain_allowed": true,
+  "label_formula": "Displacement = (q_(t+30s) - q_t) / (s_t / 2)",
+  "label_criteria": {
+    "UP_DISPLACEMENT": "Displacement >= +1.0 (midpoint moves up by >= half-spread)",
+    "DOWN_DISPLACEMENT": "Displacement <= -1.0 (midpoint moves down by >= half-spread)",
+    "BENIGN": "|Displacement| < 1.0 (midpoint stays within half-spread)",
+    "ABSTAIN": "Abstain due to high ambiguity or noisy microstructure"
+  },
+  "feature_fields": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s",
+    "binance_mid_price",
+    "binance_spread_bps",
+    "binance_microprice_offset_bps",
+    "binance_top1_depth_imbalance",
+    "binance_top5_depth_imbalance",
+    "binance_top20_depth_imbalance",
+    "binance_return_since_open_bps",
+    "binance_return_1s_bps",
+    "binance_return_2s_bps",
+    "binance_return_3s_bps",
+    "binance_return_5s_bps",
+    "binance_return_10s_bps",
+    "binance_return_30s_bps",
+    "binance_return_60s_bps",
+    "binance_taker_flow_1s",
+    "binance_taker_flow_2s",
+    "binance_taker_flow_3s",
+    "binance_taker_flow_5s",
+    "binance_taker_flow_10s",
+    "binance_taker_flow_30s",
+    "binance_taker_flow_60s"
+  ],
+  "zero_execution_constraints": {
+    "positions": 0,
+    "orders": 0,
+    "fills": 0,
+    "pnl": 0.0,
+    "paper_broker_calls": 0
+  },
+  "sha256": "6f14dddc8ccb8b6dc6c7e7fe022d08311159fa38bc455901c60f66583e10aac3"
+}

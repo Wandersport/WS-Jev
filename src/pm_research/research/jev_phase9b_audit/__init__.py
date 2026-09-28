@@ -11,8 +11,15 @@ from pm_research.research.jev_phase9b_audit.audit import (
     Phase9bAuditEngine,
     generate_phase9b_audit_reports,
 )
+from pm_research.research.jev_phase9b_audit.probability_audit import (
+    Phase9bProbabilityAuditEngine,
+    generate_phase9b_probability_audit_reports,
+)
 
 __all__ = [
     "Phase9bAuditEngine",
     "generate_phase9b_audit_reports",
+    "Phase9bProbabilityAuditEngine",
+    "generate_phase9b_probability_audit_reports",
 ]
+

@@ -1,0 +1,67 @@
+{
+  "task_id": "cross_venue_lead_coherent_10s_v2",
+  "task_version": "2.0.0",
+  "task_type": "CROSS_VENUE_EVENT_COHERENCE",
+  "description": "Predict whether Polymarket responds coherently within 10s to a Binance dislocation >= 3 bps.",
+  "trigger_condition": "First event between 180s and 60s remaining with |binance_5s_return| >= 3 bps",
+  "trigger_min_seconds_remaining": 60,
+  "trigger_max_seconds_remaining": 180,
+  "dislocation_threshold_bps": 3.0,
+  "reaction_horizon_seconds": 10,
+  "active_choices": [
+    "COHERENT",
+    "NOT_COHERENT"
+  ],
+  "all_choices": [
+    "COHERENT",
+    "NOT_COHERENT",
+    "ABSTAIN"
+  ],
+  "abstain_allowed": true,
+  "label_formula": "COHERENT iff sign(delta_q_poly_10s) == sign(delta_p_binance_5s) and |delta_q_poly_10s| > 0",
+  "label_criteria": {
+    "COHERENT": "Polymarket midpoint adjusts in same direction within 10s (|delta_q| > 0)",
+    "NOT_COHERENT": "Polymarket midpoint moves opposite or fails to move within 10s",
+    "ABSTAIN": "Abstain due to high ambiguity or noisy microstructure"
+  },
+  "feature_fields": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s",
+    "binance_mid_price",
+    "binance_spread_bps",
+    "binance_microprice_offset_bps",
+    "binance_top1_depth_imbalance",
+    "binance_top5_depth_imbalance",
+    "binance_top20_depth_imbalance",
+    "binance_return_since_open_bps",
+    "binance_return_1s_bps",
+    "binance_return_2s_bps",
+    "binance_return_3s_bps",
+    "binance_return_5s_bps",
+    "binance_return_10s_bps",
+    "binance_return_30s_bps",
+    "binance_return_60s_bps",
+    "binance_taker_flow_1s",
+    "binance_taker_flow_2s",
+    "binance_taker_flow_3s",
+    "binance_taker_flow_5s",
+    "binance_taker_flow_10s",
+    "binance_taker_flow_30s",
+    "binance_taker_flow_60s"
+  ],
+  "zero_execution_constraints": {
+    "positions": 0,
+    "orders": 0,
+    "fills": 0,
+    "pnl": 0.0,
+    "paper_broker_calls": 0
+  },
+  "sha256": "cb051016b8fa3d97b49f97652a764da5126e232f6456af61a60dddf056922671"
+}

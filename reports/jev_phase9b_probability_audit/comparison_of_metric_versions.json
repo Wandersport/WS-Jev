@@ -1,0 +1,98 @@
+{
+  "task_id": "meaningful_poly_move_30s_v1",
+  "evaluation_standard": "MEANINGFUL_MOVE vs QUIET on retrospective btc5m_leadlag_v1",
+  "cohorts": {
+    "full_dataset": {
+      "n_samples": 480,
+      "phase_9b_naive": {
+        "status": "INVALID",
+        "brier": 0.396248,
+        "log_loss": 1.038548
+      },
+      "phase_9b1_confidence_converted": {
+        "status": "SUPERSEDED",
+        "brier": 0.284581,
+        "log_loss": 0.782828
+      },
+      "phase_9b2_canonical_conditional": {
+        "status": "CANONICAL",
+        "brier": 0.395181,
+        "log_loss": 1.0468
+      },
+      "phase_9b2_unconditional": {
+        "status": "CANONICAL_UNCONDITIONAL",
+        "brier": 0.451803,
+        "log_loss": 1.18758
+      }
+    },
+    "train_60pct": {
+      "n_samples": 288,
+      "phase_9b_naive": {
+        "status": "INVALID",
+        "brier": 0.374799,
+        "log_loss": 0.987554
+      },
+      "phase_9b1_confidence_converted": {
+        "status": "SUPERSEDED",
+        "brier": 0.28848,
+        "log_loss": 0.789206
+      },
+      "phase_9b2_canonical_conditional": {
+        "status": "CANONICAL",
+        "brier": 0.41771,
+        "log_loss": 1.105981
+      },
+      "phase_9b2_unconditional": {
+        "status": "CANONICAL_UNCONDITIONAL",
+        "brier": 0.471739,
+        "log_loss": 1.244484
+      }
+    },
+    "calibration_20pct": {
+      "n_samples": 96,
+      "phase_9b_naive": {
+        "status": "INVALID",
+        "brier": 0.440428,
+        "log_loss": 1.138895
+      },
+      "phase_9b1_confidence_converted": {
+        "status": "SUPERSEDED",
+        "brier": 0.272303,
+        "log_loss": 0.759672
+      },
+      "phase_9b2_canonical_conditional": {
+        "status": "CANONICAL",
+        "brier": 0.374398,
+        "log_loss": 0.981817
+      },
+      "phase_9b2_unconditional": {
+        "status": "CANONICAL_UNCONDITIONAL",
+        "brier": 0.438985,
+        "log_loss": 1.135003
+      }
+    },
+    "retrospective_holdout_20pct": {
+      "n_samples": 96,
+      "phase_9b_naive": {
+        "status": "INVALID",
+        "brier": 0.416414,
+        "log_loss": 1.091183
+      },
+      "phase_9b1_confidence_converted": {
+        "status": "SUPERSEDED",
+        "brier": 0.285164,
+        "log_loss": 0.786852
+      },
+      "phase_9b2_canonical_conditional": {
+        "status": "CANONICAL",
+        "brier": 0.348376,
+        "log_loss": 0.934242
+      },
+      "phase_9b2_unconditional": {
+        "status": "CANONICAL_UNCONDITIONAL",
+        "brier": 0.404816,
+        "log_loss": 1.069447
+      }
+    }
+  }
+}

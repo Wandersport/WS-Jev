@@ -1,0 +1,23 @@
+{
+  "manifest_type": "api_budget",
+  "version": "1.0.0",
+  "target_dataset": "btc5m_leadlag_v2",
+  "total_dataset_rounds": 500,
+  "splits": {
+    "train_rounds": "1-300 (60% cohort)",
+    "calibration_rounds": "301-400 (20% cohort)",
+    "holdout_rounds": "401-500 (20% cohort)"
+  },
+  "remote_llm_call_policy": {
+    "train_rounds_calls_allowed": 0,
+    "calibration_rounds_calls_allowed": 0,
+    "holdout_rounds_calls_allowed": 300,
+    "max_calls_per_task": 100,
+    "max_total_calls": 300,
+    "cost_ceiling_usd": 1.0,
+    "immediate_halt_on_budget_exceeded": true,
+    "idempotent_sqlite_storage": true
+  },
+  "model_target": "typesafe/jev-1.13",
+  "sha256": "02829a9d73200756533b539d5fe21cda2b365e6022e226df7c0557cd1b0eed67"
+}

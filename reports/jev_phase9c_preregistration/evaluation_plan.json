@@ -1,0 +1,50 @@
+{
+  "manifest_type": "evaluation_plan",
+  "version": "1.0.0",
+  "primary_benchmark_cohort": "prospective_holdout_rounds_401_to_500",
+  "discrete_metrics": {
+    "primary": "balanced_accuracy",
+    "secondary": [
+      "macro_f1",
+      "matthews_correlation_coefficient",
+      "sensitivity",
+      "specificity",
+      "accuracy"
+    ]
+  },
+  "probabilistic_metrics": {
+    "primary": {
+      "name": "canonical_active_class_conditional",
+      "formula": "p_k_cond = p_k / sum_{j in active} p_j",
+      "metrics": [
+        "brier_score",
+        "log_loss"
+      ]
+    },
+    "secondary": {
+      "name": "unconditional_raw",
+      "formula": "p_k",
+      "metrics": [
+        "brier_score",
+        "log_loss"
+      ]
+    },
+    "confidence_validation": {
+      "required_formula": "confidence = (p_chosen - 1/K) / (1 - 1/K)",
+      "prohibition": "Scalar confidence must NEVER be treated directly as class probability."
+    }
+  },
+  "multiplicity_control": {
+    "method": "Bonferroni",
+    "family_hypotheses_k": 3,
+    "family_alpha": 0.05,
+    "adjusted_alpha": 0.016666666666666666
+  },
+  "bootstrap": {
+    "resamples": 1000,
+    "blocking_unit": "physical_round",
+    "confidence_level": 0.95,
+    "metric": "bootstrap_superiority_fraction"
+  },
+  "sha256": "e19a8cc65ddd3217d7ff9731a6c484391898db33a1ea4cb9034feff467817859"
+}
