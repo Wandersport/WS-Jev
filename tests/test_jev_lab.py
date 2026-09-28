@@ -388,7 +388,7 @@ def test_strategy_candidate_contract_and_hashing():
     strat = StrategyCandidate(
         strategy_id="strat_regime_vol_filter_v1",
         strategy_version="1.0.0",
-        source_reference="The-Quant-Trading-Vault/volatility/filter_01",
+        source_reference="brainbrick-trades/Quant-Trading-Strategies/strategies/007-futures-trend-following.md",
         hypothesis="Gating trades on 60s realized volatility prevents toxic execution",
         required_features=("spread_bps", "realized_volatility_60s"),
         market="BTC-5M-PM",
@@ -425,7 +425,7 @@ def test_strategy_candidate_contract_and_hashing():
     strat_diff = StrategyCandidate(
         strategy_id="strat_regime_vol_filter_v1",
         strategy_version="1.0.0",
-        source_reference="The-Quant-Trading-Vault/volatility/filter_01",
+        source_reference="brainbrick-trades/Quant-Trading-Strategies/strategies/007-futures-trend-following.md",
         hypothesis="Gating trades on 60s realized volatility prevents toxic execution",
         required_features=("spread_bps", "realized_volatility_60s"),
         market="BTC-5M-PM",

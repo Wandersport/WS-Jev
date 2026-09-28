@@ -7,25 +7,27 @@ Per the WS-Jev research principles:
 * **Zero Local Cloning of Monolithic Vaults**: The external repositories containing 5,800+ strategy files are **not** cloned locally to avoid unconstrained disk consumption on development hardware.
 * **Hypothesis Sources, Not Validated Alpha**: All external strategies, indicators, and setups are classified as unverified scientific hypotheses (`DEVELOPMENT_HYPOTHESIS` / `NOT_VALIDATED`).
 * **Zero Profitability Claims**: No strategy in this registry is assumed to have an edge or positive risk-adjusted expected value in modern prediction markets or high-frequency microstructure until prospectively evaluated with temporal holdouts and multiplicity corrections.
+* **Verified Remote Paths Only**: All cited paths are remotely verified against the authoritative GitHub repositories without local file system replication.
 
 ---
 
 ## 2. External Repository References
 
-| Repository Identifier | Primary Focus | Role in WS-Jev |
+| Repository Identifier | Verified Structure | Role in WS-Jev |
 |---|---|---|
-| `brainbrick-trades/The-Quant-Trading-Vault` | Curated archive of multi-asset algorithmic strategies, mean-reversion, trend-following, and statistical arbitrage templates. | External hypothesis catalog for Opus strategy drafting. |
-| `brainbrick-trades/Quant-Trading-Strategies` | Systematic trading models, momentum filters, volatility breakout systems, and execution heuristics. | Microstructure and regime-filter concept source. |
+| `brainbrick-trades/The-Quant-Trading-Vault` | Markdown strategy files located under `strategies/*.md` (e.g. `strategies/20Bitcoin-and-Gold-5-Minute-Scalping-Strategy-20.md`). | Curated catalog of multi-asset trading heuristics and scalping templates for Opus hypothesis drafting. |
+| `brainbrick-trades/Quant-Trading-Strategies` | 101 numbered strategy markdown files under `strategies/*.md` (e.g. `strategies/007-futures-trend-following.md`, `strategies/056-futures-mean-reversion.md`). | Microstructure, momentum, and regime-filter concept source. |
 
 ---
 
 ## 3. Registered Candidate Strategy Templates
 
-The following strategy templates illustrate how external concepts are translated into formal, immutable `StrategyCandidate` contracts with deterministic hashes, parameter budgets, and pre-committed rejection conditions:
+The following strategy templates illustrate how verified external concepts are translated into formal, immutable `StrategyCandidate` contracts with deterministic hashes, parameter budgets, and pre-committed rejection conditions:
 
 ### 3.1. Template `STRAT_MOMENTUM_BREAKOUT_V1`
-* **Source Reference**: `brainbrick-trades/Quant-Trading-Strategies/breakout/volatility_breakout.py`
-* **Core Hypothesis**: Short-term directional momentum in fast BTC perp orderbook returns persists across the 5-minute prediction market settlement window when accompanied by high book depth imbalance.
+* **Source Reference**: `brainbrick-trades/Quant-Trading-Strategies/strategies/007-futures-trend-following.md`
+* **External Strategy Title**: "Futures Trend Following (Momentum)"
+* **Core Hypothesis**: Short-term directional momentum in fast BTC perp returns persists across the 5-minute prediction market settlement window when accompanied by high book depth imbalance.
 * **Pre-declared Market**: `BTC-5M`
 * **Target Horizon**: `5m`
 * **Required Microstructure Features**: `binance_return_60s_bps`, `binance_top5_depth_imbalance`, `poly_midpoint`, `poly_spread`
@@ -37,11 +39,12 @@ The following strategy templates illustrate how external concepts are translated
 * **Status**: `DEVELOPMENT_HYPOTHESIS` (Not validated).
 
 ### 3.2. Template `STRAT_MICROSTRUCTURE_MEAN_REVERSION_V1`
-* **Source Reference**: `brainbrick-trades/The-Quant-Trading-Vault/mean_reversion/microprice_reversion.py`
-* **Core Hypothesis**: Microprice dislocations relative to mid-price that exceed 2 standard deviations revert within 30 seconds when taker flow is balanced.
+* **Source Reference**: `brainbrick-trades/Quant-Trading-Strategies/strategies/056-futures-mean-reversion.md`
+* **External Strategy Title**: "Futures Contrarian Trading (Mean-Reversion)"
+* **Core Hypothesis**: Short-term dislocations between fast Binance reference prices and Polymarket orderbook midpoints revert when depth is balanced and no persistent order flow imbalance is present.
 * **Pre-declared Market**: `BTC-5M`
 * **Target Horizon**: `30s`
-* **Required Microstructure Features**: `binance_microprice_offset_bps`, `binance_taker_flow_30s`, `poly_midpoint`
+* **Required Microstructure Features**: `binance_mid`, `poly_midpoint`, `poly_spread`, `top5_depth_imbalance`
 * **Pre-committed Parameter Budget**: Max 8 variants.
 * **Pre-committed Rejection Conditions**:
   1. Mean reversion failure rate $> 48\%$ on active rounds.
@@ -50,7 +53,7 @@ The following strategy templates illustrate how external concepts are translated
 
 ### 3.3. Template `STRAT_JEV_SETUP_FILTER_V1`
 * **Source Reference**: `WS-Jev/Phase9A/setup_gating`
-* **Core Hypothesis**: Using Jev as a typed setup gate (`GOOD_SETUP` vs `ABSTAIN`) improves the Sharpe ratio and Brier calibration of a simple baseline rule by filtering out low-conviction/noisy regimes.
+* **Core Hypothesis**: Using Jev as a typed setup gate (`GOOD_SETUP` vs `ABSTAIN`) improves the Brier calibration and effective accuracy of a simple baseline rule by filtering out low-conviction/noisy regimes.
 * **Pre-declared Market**: `BTC-5M`
 * **Target Horizon**: `5m`
 * **Required Microstructure Features**: `setup_gating_v1` Jev decision, `binance_spread_bps`, `poly_spread`

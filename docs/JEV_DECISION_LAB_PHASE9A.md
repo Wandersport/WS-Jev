@@ -57,5 +57,5 @@ The external quant strategy repositories (`brainbrick-trades/The-Quant-Trading-V
 * **Separation**: Opus is never permitted to evaluate its own hypotheses or adjust rejection thresholds post-hoc.
 
 ### 3.5. Separation from Phase 8C v2
-Phase 8C v2 is a **frozen high-frequency observational measurement apparatus** designed to collect 500 physical BTC-5m rounds with microsecond-stamped Binance trades and Polymarket book deltas. 
+Phase 8C v2 is a **frozen high-frequency observational measurement apparatus** designed to collect 500 physical BTC-5m rounds with high-resolution millisecond-stamped Binance trades and Polymarket book events. 
 Phase 9A development operates on an isolated branch (`research/jev-phase9a`) and adds separate tables (`jev_lab_*`). It does not alter Phase 8C v2 collector constants, schemas, or execution flows.
