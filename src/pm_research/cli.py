@@ -1388,6 +1388,214 @@ def cmd_btc5m_leadlag_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+# ==============================================================================
+# Phase 8C.2: Lead-Lag v2 CLI Handlers
+# ==============================================================================
+
+def cmd_btc5m_leadlag_v2_run(args: argparse.Namespace) -> int:
+    """Internal runner for Phase 8C.2 lead-lag v2 collector."""
+    from pm_research.research.btc5m.leadlag_v2_collector import LeadLagCollectorV2
+
+    db = get_db(args.db)
+    is_pilot = getattr(args, "pilot", False)
+    collector = LeadLagCollectorV2(
+        db=db,
+        target_physical_rounds=args.target_physical_rounds,
+        is_pilot=is_pilot,
+    )
+    collector.run()
+    return 0
+
+
+def cmd_btc5m_leadlag_v2_start(args: argparse.Namespace) -> int:
+    """Launch autonomous Phase 8C.2 lead-lag v2 collector."""
+    from pm_research.research.btc5m.leadlag_v2_collector import LeadLagCollectorV2
+    from pm_research.research.btc5m.leadlag_v2_process import start_leadlag_v2_collector
+
+    is_pilot = getattr(args, "pilot", False)
+    target_rounds = args.target_physical_rounds
+    mode_str = "PILOT VALIDATION (3 PHYSICAL ROUNDS)" if is_pilot else f"PRODUCTION ({target_rounds} PHYSICAL ROUNDS)"
+
+    print("\n" + "=" * 80)
+    print("  [!] LAUNCHING BTC 5-MINUTE HIGH-FREQUENCY LEAD-LAG V2 COLLECTOR")
+    print(f"      Mode:                  {mode_str}")
+    print("      Observational Research Only - Zero Live/Paper Trading Execution")
+    print(f"      Target Physical Rounds:{target_rounds}")
+    print("=" * 80)
+
+    if getattr(args, "foreground", False):
+        print("  Running synchronously in foreground mode (Ctrl+C to stop)...")
+        db = get_db(args.db)
+        collector = LeadLagCollectorV2(
+            db=db,
+            target_physical_rounds=target_rounds,
+            is_pilot=is_pilot,
+        )
+        collector.run()
+        return 0
+
+    success, msg, pid = start_leadlag_v2_collector(
+        target_physical_rounds=target_rounds,
+        is_pilot=is_pilot,
+        db_path=args.db,
+    )
+    pilot_flag = " --pilot" if is_pilot else ""
+    if success:
+        print(f"  [+] {msg}")
+        print(f"  PID:                       {pid}")
+        print(f"  Status Command:            uv run pmr btc5m-leadlag-v2-status{pilot_flag}")
+        print(f"  Stop Command:              uv run pmr btc5m-leadlag-v2-stop{pilot_flag}")
+        print(f"  Audit Command:             uv run pmr btc5m-leadlag-v2-audit{pilot_flag}")
+        print(f"  Caffeinate Command:        nohup caffeinate -i -w {pid} >/dev/null 2>&1 &")
+        print("=" * 80 + "\n")
+        return 0
+    else:
+        print(f"  [-] {msg}")
+        print("=" * 80 + "\n")
+        return 1
+
+
+def cmd_btc5m_leadlag_v2_status(args: argparse.Namespace) -> int:
+    """Display comprehensive status of the Phase 8C.2 lead-lag v2 collector."""
+    from pm_research.research.btc5m.leadlag_v2_process import get_leadlag_v2_collector_status
+
+    is_pilot = getattr(args, "pilot", False)
+    st = get_leadlag_v2_collector_status(db_path=args.db, is_pilot=is_pilot)
+    summary = st["summary"]
+    hb = st.get("latest_heartbeat") or {}
+    lat_json = hb.get("latency_metrics_json") or "{}"
+    try:
+        latencies = json.loads(lat_json)
+    except Exception:
+        latencies = {}
+
+    bn_lat = latencies.get("binance_source_to_recv", {})
+    poly_lat = latencies.get("poly_source_to_recv", {})
+    skew_lat = latencies.get("inter_feed_skew", {})
+    tgt_lat = latencies.get("sample_target_error", {})
+
+    mode_label = "PILOT (3 PHYSICAL ROUNDS)" if is_pilot else "PRODUCTION (500 PHYSICAL ROUNDS)"
+
+    print("\n" + "=" * 80)
+    print(f"  [!] BTC 5-MINUTE LEAD-LAG V2 COLLECTOR STATUS ({mode_label})")
+    print("=" * 80)
+    print(f"  COLLECTOR_STATE:           {st['collector_state']}")
+    print(f"  PROCESS_ALIVE:             {st['process_alive']}")
+    print(f"  PID:                       {st['pid']}")
+    print(f"  FILE_LOCK_HELD:            {st['file_lock_held']}")
+    print(f"  HEARTBEAT_FRESH:           {st['heartbeat_fresh']} ({st['heartbeat_age_sec']}s ago)")
+    print("-" * 80)
+    print(f"  EXPERIMENT_ID:             {st['experiment_id']}")
+    print(f"  EXPERIMENT_SPEC_HASH:      {st['experiment_spec_hash']}")
+    target_rd = 3 if is_pilot else 500
+    print(f"  PHYSICAL_ROUNDS_CAPTURED:  {summary['physical_rounds_captured']} / {target_rd} (Completed: {summary['physical_rounds_completed']})")
+    print(f"  SYNCHRONIZED_1S_SAMPLES:   {summary['total_samples']} (Valid: {summary['valid_samples']}, Stale: {summary['stale_samples']})")
+    print(f"  STALE_SAMPLE_RATE:         {summary['stale_rate'] * 100:.2f}%")
+    print("-" * 80)
+    print("FEED TELEMETRY:")
+    print(f"  BINANCE_FEED_STATUS:       {hb.get('binance_feed_status', 'UNKNOWN')}")
+    print(f"  BINANCE_DEPTH_RECEIVED:    {summary['raw_binance_depth_events']}")
+    print(f"  BINANCE_AGGTRADES_RECEIVED:{hb.get('binance_trade_events', summary['raw_binance_trade_events'])}")
+    print(f"  UNIQUE_AGGTRADES_PERSISTED:{summary['unique_binance_trade_events']}")
+    print(f"  DUPLICATE_TRADE_EVENTS:    {hb.get('duplicate_trades', 0)}")
+    print(f"  POLYMARKET_FEED_STATUS:    {hb.get('polymarket_feed_status', 'UNKNOWN')}")
+    print(f"  POLY_SNAPSHOTS_RECEIVED:   {summary['poly_snapshot_events']}")
+    print(f"  POLY_DELTAS_RECEIVED:      {summary['poly_delta_events']}")
+    print(f"  POLY_REST_FALLBACK_EVENTS: {summary['poly_rest_fallback_events']}")
+    print("-" * 80)
+    print("TIMESTAMP & TAKER-FLOW QUALITY:")
+    print(f"  BINANCE_TS_COVERAGE:       {summary['binance_timestamp_coverage'] * 100:.1f}%")
+    print(f"  POLY_TS_COVERAGE:          {summary['poly_timestamp_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_1S_COVERAGE:    {summary['taker_flow_1s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_5S_COVERAGE:    {summary['taker_flow_5s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_10S_COVERAGE:   {summary['taker_flow_10s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_30S_COVERAGE:   {summary['taker_flow_30s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_60S_COVERAGE:   {summary['taker_flow_60s_coverage'] * 100:.1f}%")
+    print("-" * 80)
+    print("DIAGNOSTICS & PARSER INTEGRITY:")
+    print(f"  MALFORMED_EVENTS:          {hb.get('malformed_events', 0)}")
+    print(f"  UNHANDLED_EVENTS:          {hb.get('unhandled_events', 0)}")
+    print(f"  RAW_PAYLOAD_COUNT:         {summary['raw_payload_count']}")
+    print(f"  RAW_COMPRESSED_BYTES:      {summary['raw_compressed_bytes']:,} bytes ({summary['compression_ratio']*100:.1f}% ratio)")
+    print("-" * 80)
+    print("LATENCY & TIMING DISTRIBUTIONS (ms):")
+    print(f"  Binance Wire Latency:      p50={bn_lat.get('p50', 0)}ms, p95={bn_lat.get('p95', 0)}ms, p99={bn_lat.get('p99', 0)}ms, max={bn_lat.get('max', 0)}ms")
+    print(f"  Polymarket Wire Latency:   p50={poly_lat.get('p50', 0)}ms, p95={poly_lat.get('p95', 0)}ms, p99={poly_lat.get('p99', 0)}ms, max={poly_lat.get('max', 0)}ms")
+    print(f"  Inter-Feed Receive Skew:   p50={skew_lat.get('p50', 0)}ms, p95={skew_lat.get('p95', 0)}ms, p99={skew_lat.get('p99', 0)}ms, max={skew_lat.get('max', 0)}ms")
+    print(f"  Sample Target Error:       p50={tgt_lat.get('p50', 0)}ms, p95={tgt_lat.get('p95', 0)}ms, p99={tgt_lat.get('p99', 0)}ms, max={tgt_lat.get('max', 0)}ms")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_btc5m_leadlag_v2_stop(args: argparse.Namespace) -> int:
+    """Gracefully terminate running lead-lag v2 collector."""
+    from pm_research.research.btc5m.leadlag_v2_process import stop_leadlag_v2_collector
+
+    is_pilot = getattr(args, "pilot", False)
+    mode_str = "PILOT" if is_pilot else "PRODUCTION"
+    print("\n" + "=" * 80)
+    print(f"  [!] STOPPING BTC 5-MINUTE LEAD-LAG V2 COLLECTOR ({mode_str})")
+    print("=" * 80)
+    success, msg = stop_leadlag_v2_collector(is_pilot=is_pilot)
+    if success:
+        print(f"  [+] {msg}")
+        print("=" * 80 + "\n")
+        return 0
+    else:
+        print(f"  [-] {msg}")
+        print("=" * 80 + "\n")
+        return 1
+
+
+def cmd_btc5m_leadlag_v2_audit(args: argparse.Namespace) -> int:
+    """Audit data quality and compute offline lead-lag v2 target movements."""
+    from pm_research.research.btc5m.leadlag_v2_audit import LeadLagV2Audit
+    from pm_research.research.btc5m.leadlag_v2_experiment import EXPERIMENT_ID, EXPERIMENT_PILOT_ID
+
+    is_pilot = getattr(args, "pilot", False)
+    exp_id = EXPERIMENT_PILOT_ID if is_pilot else EXPERIMENT_ID
+
+    db = get_db(args.db)
+    audit_engine = LeadLagV2Audit(db)
+    audit = audit_engine.run_quality_audit(experiment_id=exp_id)
+    summary = audit["summary"]
+
+    mode_label = "PILOT (3 PHYSICAL ROUNDS)" if is_pilot else "PRODUCTION (500 PHYSICAL ROUNDS)"
+
+    print("\n" + "=" * 80)
+    print(f"  [!] BTC 5-MINUTE LEAD-LAG V2 RESEARCH AUDIT ({mode_label})")
+    print(f"      Experiment ID:   {audit['experiment_id']}")
+    print(f"      Spec Hash:       {audit['experiment_spec_hash']}")
+    print("=" * 80)
+    print(f"  PHYSICAL_ROUNDS_CAPTURED:  {summary['physical_rounds_captured']}")
+    print(f"  PHYSICAL_ROUNDS_COMPLETED: {summary['physical_rounds_completed']}")
+    print(f"  TOTAL_1S_SAMPLES:          {summary['total_samples']} (Valid: {summary['valid_samples']})")
+    print(f"  STALE_RATE:                {summary['stale_rate'] * 100:.2f}%")
+    print(f"  POLY_TS_COVERAGE:          {summary['poly_timestamp_coverage'] * 100:.1f}%")
+    print(f"  BINANCE_TS_COVERAGE:       {summary['binance_timestamp_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_1S_COVERAGE:    {summary['taker_flow_1s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_5S_COVERAGE:    {summary['taker_flow_5s_coverage'] * 100:.1f}%")
+    print(f"  TAKER_FLOW_60S_COVERAGE:   {summary['taker_flow_60s_coverage'] * 100:.1f}%")
+    print(f"  UNIQUE_AGGTRADES:          {summary['unique_binance_trade_events']}")
+    print(f"  RAW_PAYLOAD_COUNT:         {summary['raw_payload_count']}")
+    print(f"  COMPRESSED_STORAGE:        {summary['raw_compressed_bytes']:,} bytes ({summary['compression_ratio']*100:.1f}% ratio)")
+    print(f"  PREDECLARED_LAGS:          {audit['predeclared_lags']}")
+
+    # Offline target pair computation check
+    pairs = audit_engine.compute_offline_target_pairs(experiment_id=exp_id)
+    print(f"  OFFLINE_EVALUATED_PAIRS:   {len(pairs)}")
+    if pairs:
+        valid_1s = sum(1 for p in pairs if p.get("delta_q_1s") is not None)
+        valid_5s = sum(1 for p in pairs if p.get("delta_q_5s") is not None)
+        valid_30s = sum(1 for p in pairs if p.get("delta_q_30s") is not None)
+        print(f"    - Valid 1s Target Pairs:   {valid_1s}/{len(pairs)} ({valid_1s/len(pairs)*100:.1f}%)")
+        print(f"    - Valid 5s Target Pairs:   {valid_5s}/{len(pairs)} ({valid_5s/len(pairs)*100:.1f}%)")
+        print(f"    - Valid 30s Target Pairs:  {valid_30s}/{len(pairs)} ({valid_30s/len(pairs)*100:.1f}%)")
+
+    print("=" * 80 + "\n")
+    return 0
+
+
 def cmd_btc5m_leadlag_analyze(args: argparse.Namespace) -> int:
     """Execute complete forensic audit and predeclared lead-lag analysis (Phase 8C.1)."""
     from pm_research.research.btc5m.leadlag_analysis import generate_forensic_report_artifacts
@@ -1716,6 +1924,78 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory to write analysis CSV/JSON/MD report artifacts",
     )
 
+    # btc5m-leadlag-v2-run
+    p_ll_v2_run = subparsers.add_parser(
+        "btc5m-leadlag-v2-run",
+        help="Internal high-frequency 1-second lead-lag v2 collector runner",
+    )
+    p_ll_v2_run.add_argument(
+        "--target-physical-rounds",
+        type=int,
+        default=500,
+        help="Target physical rounds before cleanly stopping (default: 500)",
+    )
+    p_ll_v2_run.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Run in isolated pilot validation mode (default 3 rounds, isolated tables)",
+    )
+
+    # btc5m-leadlag-v2-start
+    p_ll_v2_start = subparsers.add_parser(
+        "btc5m-leadlag-v2-start",
+        help="Launch autonomous detached lead-lag v2 collector (Phase 8C.2)",
+    )
+    p_ll_v2_start.add_argument(
+        "--target-physical-rounds",
+        type=int,
+        default=500,
+        help="Target physical rounds before cleanly stopping (default: 500)",
+    )
+    p_ll_v2_start.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Run short observational pilot validation only (3 physical rounds)",
+    )
+    p_ll_v2_start.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Run collector in foreground instead of detached OS background process",
+    )
+
+    # btc5m-leadlag-v2-status
+    p_ll_v2_status = subparsers.add_parser(
+        "btc5m-leadlag-v2-status",
+        help="Display comprehensive operational and synchronization status of lead-lag v2 collector",
+    )
+    p_ll_v2_status.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Display status for pilot experiment",
+    )
+
+    # btc5m-leadlag-v2-stop
+    p_ll_v2_stop = subparsers.add_parser(
+        "btc5m-leadlag-v2-stop",
+        help="Gracefully terminate running lead-lag v2 collector process",
+    )
+    p_ll_v2_stop.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Stop pilot collector process",
+    )
+
+    # btc5m-leadlag-v2-audit
+    p_ll_v2_audit = subparsers.add_parser(
+        "btc5m-leadlag-v2-audit",
+        help="Audit lead-lag v2 dataset quality, timestamp provenance, and offline target movements",
+    )
+    p_ll_v2_audit.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Audit pilot experiment dataset",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -1757,6 +2037,11 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-leadlag-stop": cmd_btc5m_leadlag_stop,
         "btc5m-leadlag-audit": cmd_btc5m_leadlag_audit,
         "btc5m-leadlag-analyze": cmd_btc5m_leadlag_analyze,
+        "btc5m-leadlag-v2-run": cmd_btc5m_leadlag_v2_run,
+        "btc5m-leadlag-v2-start": cmd_btc5m_leadlag_v2_start,
+        "btc5m-leadlag-v2-status": cmd_btc5m_leadlag_v2_status,
+        "btc5m-leadlag-v2-stop": cmd_btc5m_leadlag_v2_stop,
+        "btc5m-leadlag-v2-audit": cmd_btc5m_leadlag_v2_audit,
     }
 
     handler = dispatch.get(args.subcommand)

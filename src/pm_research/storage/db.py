@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import threading
 import time
+import zlib
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -774,6 +776,198 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_leadlag_samples_round ON leadlag_samples(round_slug);
                 CREATE INDEX IF NOT EXISTS idx_leadlag_samples_target ON leadlag_samples(sample_target_ts_ms);
+
+                -- Phase 8C.2: Remediated Isolated Lead-Lag v2 Experiment Tables
+                CREATE TABLE IF NOT EXISTS leadlag_v2_rounds (
+                    round_slug TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    is_pilot INTEGER NOT NULL DEFAULT 0,
+                    start_epoch INTEGER NOT NULL,
+                    end_epoch INTEGER NOT NULL,
+                    up_token_id TEXT,
+                    down_token_id TEXT,
+                    condition_id TEXT,
+                    status TEXT NOT NULL,
+                    sample_count INTEGER NOT NULL DEFAULT 0,
+                    valid_sample_count INTEGER NOT NULL DEFAULT 0,
+                    created_at_utc TEXT NOT NULL,
+                    completed_at_utc TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_samples (
+                    sample_id TEXT PRIMARY KEY,
+                    round_slug TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    is_pilot INTEGER NOT NULL DEFAULT 0,
+                    sample_target_ts_ms INTEGER NOT NULL,
+                    sample_actual_ts_ms INTEGER NOT NULL,
+                    local_monotonic_ns INTEGER NOT NULL,
+                    seconds_remaining INTEGER NOT NULL,
+                    poly_source_ts_ms INTEGER,
+                    poly_recv_ts_ms INTEGER NOT NULL,
+                    poly_receipt_age_ms INTEGER NOT NULL,
+                    poly_source_age_ms INTEGER,
+                    poly_provenance_mode TEXT NOT NULL DEFAULT 'WS_SNAPSHOT',
+                    poly_best_bid REAL,
+                    poly_best_ask REAL,
+                    poly_midpoint REAL,
+                    poly_spread REAL,
+                    poly_return_1s REAL,
+                    poly_return_2s REAL,
+                    poly_return_3s REAL,
+                    poly_return_5s REAL,
+                    poly_return_10s REAL,
+                    poly_return_30s REAL,
+                    poly_is_crossed INTEGER NOT NULL,
+                    poly_is_valid INTEGER NOT NULL,
+                    binance_source_ts_ms INTEGER,
+                    binance_recv_ts_ms INTEGER NOT NULL,
+                    binance_receipt_age_ms INTEGER NOT NULL,
+                    binance_source_age_ms INTEGER,
+                    binance_best_bid REAL,
+                    binance_best_ask REAL,
+                    binance_mid_price REAL,
+                    binance_microprice REAL,
+                    binance_microprice_offset_bps REAL,
+                    binance_spread_bps REAL,
+                    binance_basis_bps REAL,
+                    binance_return_since_open_bps REAL,
+                    binance_return_1s_bps REAL,
+                    binance_return_2s_bps REAL,
+                    binance_return_3s_bps REAL,
+                    binance_return_5s_bps REAL,
+                    binance_return_10s_bps REAL,
+                    binance_return_30s_bps REAL,
+                    binance_return_60s_bps REAL,
+                    binance_taker_flow_1s REAL,
+                    binance_taker_flow_2s REAL,
+                    binance_taker_flow_3s REAL,
+                    binance_taker_flow_5s REAL,
+                    binance_taker_flow_10s REAL,
+                    binance_taker_flow_30s REAL,
+                    binance_taker_flow_60s REAL,
+                    binance_top1_depth_imbalance REAL,
+                    binance_top5_depth_imbalance REAL,
+                    binance_top20_depth_imbalance REAL,
+                    binance_is_valid INTEGER NOT NULL,
+                    source_to_receive_latency_ms INTEGER,
+                    inter_feed_receive_skew_ms INTEGER NOT NULL,
+                    is_stale INTEGER NOT NULL,
+                    stale_reason TEXT,
+                    is_valid INTEGER NOT NULL,
+                    raw_payload_id TEXT,
+                    raw_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_binance_depth_events (
+                    event_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    round_slug TEXT NOT NULL,
+                    source_ts_ms INTEGER,
+                    recv_ts_ms INTEGER NOT NULL,
+                    local_monotonic_ns INTEGER,
+                    first_update_id INTEGER,
+                    final_update_id INTEGER,
+                    prev_final_update_id INTEGER,
+                    best_bid REAL NOT NULL,
+                    best_ask REAL NOT NULL,
+                    mid_price REAL NOT NULL,
+                    raw_payload_id TEXT,
+                    raw_json TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_binance_trade_events (
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    agg_trade_id INTEGER NOT NULL,
+                    round_slug TEXT NOT NULL,
+                    trade_ts_ms INTEGER NOT NULL,
+                    recv_ts_ms INTEGER NOT NULL,
+                    local_monotonic_ns INTEGER,
+                    price REAL NOT NULL,
+                    quantity REAL NOT NULL,
+                    is_buyer_maker INTEGER NOT NULL,
+                    raw_payload_id TEXT,
+                    PRIMARY KEY (experiment_id, agg_trade_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_polymarket_book_events (
+                    event_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    round_slug TEXT NOT NULL,
+                    token_id TEXT NOT NULL,
+                    provenance_mode TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    source_ts_ms INTEGER,
+                    recv_ts_ms INTEGER NOT NULL,
+                    local_monotonic_ns INTEGER,
+                    best_bid REAL,
+                    best_ask REAL,
+                    midpoint REAL,
+                    spread REAL,
+                    raw_hash TEXT,
+                    raw_payload_id TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_raw_payloads (
+                    payload_id TEXT PRIMARY KEY,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    feed TEXT NOT NULL,
+                    round_slug TEXT NOT NULL,
+                    recv_ts_ms INTEGER NOT NULL,
+                    uncompressed_len INTEGER NOT NULL,
+                    compressed_len INTEGER NOT NULL,
+                    sha256_hash TEXT NOT NULL,
+                    compressed_payload BLOB NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS leadlag_v2_collector_heartbeat (
+                    heartbeat_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp_utc TEXT NOT NULL,
+                    epoch_ms INTEGER NOT NULL,
+                    pid INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    experiment_id TEXT NOT NULL,
+                    experiment_spec_hash TEXT NOT NULL,
+                    is_pilot INTEGER NOT NULL DEFAULT 0,
+                    physical_rounds_captured INTEGER NOT NULL,
+                    total_samples INTEGER NOT NULL,
+                    valid_samples INTEGER NOT NULL,
+                    stale_samples INTEGER NOT NULL,
+                    binance_feed_status TEXT NOT NULL,
+                    polymarket_feed_status TEXT NOT NULL,
+                    binance_depth_events INTEGER NOT NULL DEFAULT 0,
+                    binance_trade_events INTEGER NOT NULL DEFAULT 0,
+                    binance_unique_trades INTEGER NOT NULL DEFAULT 0,
+                    poly_snapshot_events INTEGER NOT NULL DEFAULT 0,
+                    poly_delta_events INTEGER NOT NULL DEFAULT 0,
+                    poly_rest_fallback_events INTEGER NOT NULL DEFAULT 0,
+                    binance_source_ts_present INTEGER NOT NULL DEFAULT 0,
+                    binance_source_ts_missing INTEGER NOT NULL DEFAULT 0,
+                    poly_source_ts_present INTEGER NOT NULL DEFAULT 0,
+                    poly_source_ts_missing INTEGER NOT NULL DEFAULT 0,
+                    binance_ts_coverage REAL NOT NULL DEFAULT 0.0,
+                    poly_ts_coverage REAL NOT NULL DEFAULT 0.0,
+                    taker_flow_60s_coverage REAL NOT NULL DEFAULT 0.0,
+                    malformed_events INTEGER NOT NULL DEFAULT 0,
+                    unhandled_events INTEGER NOT NULL DEFAULT 0,
+                    duplicate_trades INTEGER NOT NULL DEFAULT 0,
+                    latency_metrics_json TEXT NOT NULL DEFAULT '{}',
+                    extra_json TEXT NOT NULL DEFAULT '{}'
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_samples_round ON leadlag_v2_samples(round_slug);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_samples_target ON leadlag_v2_samples(sample_target_ts_ms);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_samples_exp ON leadlag_v2_samples(experiment_id);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_trade_exp ON leadlag_v2_binance_trade_events(experiment_id, trade_ts_ms);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_poly_exp ON leadlag_v2_polymarket_book_events(experiment_id, recv_ts_ms);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_depth_exp ON leadlag_v2_binance_depth_events(experiment_id, recv_ts_ms);
+                CREATE INDEX IF NOT EXISTS idx_leadlag_v2_payload_exp ON leadlag_v2_raw_payloads(experiment_id);
 
                 -- Indexes for fast query and integrity verification
                 CREATE INDEX IF NOT EXISTS idx_snapshots_market ON market_snapshots(market_id);
@@ -2719,6 +2913,9 @@ class Database:
 
     def get_leadlag_audit_summary(self, experiment_id: str = "btc5m_leadlag_v1") -> dict[str, Any]:
         """Aggregate statistical summary of leadlag dataset quality and counts."""
+        if experiment_id.startswith("btc5m_leadlag_v2"):
+            return self.get_leadlag_v2_audit_summary(experiment_id=experiment_id)
+
         with self._get_connection() as conn:
             rounds_captured = conn.execute(
                 "SELECT count(*) FROM leadlag_rounds WHERE experiment_id = ?",
@@ -2768,6 +2965,587 @@ class Database:
                 "raw_binance_depth_events": int(raw_depth),
                 "raw_binance_trade_events": int(raw_trades),
                 "raw_polymarket_book_events": int(raw_poly),
+            }
+
+    # ==========================================================================
+    # Phase 8C.2: Isolated Lead-Lag v2 Methods
+    # ==========================================================================
+
+    def save_leadlag_v2_round(self, round_data: dict[str, Any], conn: sqlite3.Connection | None = None) -> None:
+        """Persist or update an active or completed leadlag v2 physical round."""
+        sql = """
+            INSERT OR REPLACE INTO leadlag_v2_rounds (
+                round_slug, experiment_id, experiment_spec_hash, is_pilot,
+                start_epoch, end_epoch, up_token_id, down_token_id, condition_id,
+                status, sample_count, valid_sample_count, created_at_utc, completed_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (
+            round_data["round_slug"],
+            round_data["experiment_id"],
+            round_data["experiment_spec_hash"],
+            1 if round_data.get("is_pilot") else 0,
+            round_data["start_epoch"],
+            round_data["end_epoch"],
+            round_data.get("up_token_id"),
+            round_data.get("down_token_id"),
+            round_data.get("condition_id"),
+            round_data["status"],
+            round_data.get("sample_count", 0),
+            round_data.get("valid_sample_count", 0),
+            round_data["created_at_utc"],
+            round_data.get("completed_at_utc"),
+        )
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
+
+    def update_leadlag_v2_round_completion(
+        self,
+        round_slug: str,
+        sample_count: int,
+        valid_sample_count: int,
+        completed_at_utc: str,
+        experiment_id: str | None = None,
+    ) -> None:
+        """Mark physical round completed in leadlag v2."""
+        sql = """
+            UPDATE leadlag_v2_rounds
+            SET status = 'COMPLETED',
+                sample_count = ?,
+                valid_sample_count = ?,
+                completed_at_utc = ?
+            WHERE round_slug = ?
+        """
+        params = [sample_count, valid_sample_count, completed_at_utc, round_slug]
+        if experiment_id is not None:
+            sql += " AND experiment_id = ?"
+            params.append(experiment_id)
+        with self._get_connection() as conn:
+            conn.execute(sql, tuple(params))
+
+    def get_leadlag_v2_rounds(self, experiment_id: str = "btc5m_leadlag_v2") -> list[dict[str, Any]]:
+        """Retrieve all recorded physical rounds for leadlag v2 experiment."""
+        sql = "SELECT * FROM leadlag_v2_rounds WHERE experiment_id = ? ORDER BY start_epoch ASC"
+        with self._get_connection() as conn:
+            return [dict(r) for r in conn.execute(sql, (experiment_id,)).fetchall()]
+
+    def get_leadlag_v2_round(self, round_slug: str, experiment_id: str | None = None) -> dict[str, Any] | None:
+        """Retrieve a specific leadlag v2 round."""
+        sql = "SELECT * FROM leadlag_v2_rounds WHERE round_slug = ?"
+        params = [round_slug]
+        if experiment_id is not None:
+            sql += " AND experiment_id = ?"
+            params.append(experiment_id)
+        with self._get_connection() as conn:
+            row = conn.execute(sql, tuple(params)).fetchone()
+            return dict(row) if row else None
+
+    def save_leadlag_v2_samples_batch(self, samples: list[Any], conn: sqlite3.Connection | None = None) -> None:
+        """Batch persist 1-second synchronized leadlag v2 samples."""
+        if not samples:
+            return
+        sql = """
+            INSERT OR REPLACE INTO leadlag_v2_samples (
+                sample_id, round_slug, experiment_id, experiment_spec_hash, is_pilot,
+                sample_target_ts_ms, sample_actual_ts_ms, local_monotonic_ns, seconds_remaining,
+                poly_source_ts_ms, poly_recv_ts_ms, poly_receipt_age_ms, poly_source_age_ms,
+                poly_provenance_mode, poly_best_bid, poly_best_ask, poly_midpoint, poly_spread,
+                poly_return_1s, poly_return_2s, poly_return_3s, poly_return_5s, poly_return_10s,
+                poly_return_30s, poly_is_crossed, poly_is_valid,
+                binance_source_ts_ms, binance_recv_ts_ms, binance_receipt_age_ms, binance_source_age_ms,
+                binance_best_bid, binance_best_ask, binance_mid_price, binance_microprice,
+                binance_microprice_offset_bps, binance_spread_bps, binance_basis_bps,
+                binance_return_since_open_bps, binance_return_1s_bps, binance_return_2s_bps,
+                binance_return_3s_bps, binance_return_5s_bps, binance_return_10s_bps,
+                binance_return_30s_bps, binance_return_60s_bps,
+                binance_taker_flow_1s, binance_taker_flow_2s, binance_taker_flow_3s,
+                binance_taker_flow_5s, binance_taker_flow_10s, binance_taker_flow_30s, binance_taker_flow_60s,
+                binance_top1_depth_imbalance, binance_top5_depth_imbalance, binance_top20_depth_imbalance,
+                binance_is_valid, source_to_receive_latency_ms, inter_feed_receive_skew_ms,
+                is_stale, stale_reason, is_valid, raw_payload_id, raw_json
+            ) VALUES (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?, ?, ?
+            )
+        """
+        rows = []
+        for s in samples:
+            d = s if isinstance(s, dict) else s.to_dict()
+            rows.append((
+                d["sample_id"],
+                d["round_slug"],
+                d["experiment_id"],
+                d["experiment_spec_hash"],
+                1 if d.get("is_pilot") else 0,
+                d["sample_target_ts_ms"],
+                d["sample_actual_ts_ms"],
+                d["local_monotonic_ns"],
+                d["seconds_remaining"],
+                d.get("poly_source_ts_ms"),
+                d["poly_recv_ts_ms"],
+                d["poly_receipt_age_ms"],
+                d.get("poly_source_age_ms"),
+                d.get("poly_provenance_mode", "WS_SNAPSHOT"),
+                d.get("poly_best_bid"),
+                d.get("poly_best_ask"),
+                d.get("poly_midpoint"),
+                d.get("poly_spread"),
+                d.get("poly_return_1s"),
+                d.get("poly_return_2s"),
+                d.get("poly_return_3s"),
+                d.get("poly_return_5s"),
+                d.get("poly_return_10s"),
+                d.get("poly_return_30s"),
+                1 if d.get("poly_is_crossed") else 0,
+                1 if d.get("poly_is_valid") else 0,
+                d.get("binance_source_ts_ms"),
+                d["binance_recv_ts_ms"],
+                d["binance_receipt_age_ms"],
+                d.get("binance_source_age_ms"),
+                d.get("binance_best_bid"),
+                d.get("binance_best_ask"),
+                d.get("binance_mid_price"),
+                d.get("binance_microprice"),
+                d.get("binance_microprice_offset_bps"),
+                d.get("binance_spread_bps"),
+                d.get("binance_basis_bps"),
+                d.get("binance_return_since_open_bps"),
+                d.get("binance_return_1s_bps"),
+                d.get("binance_return_2s_bps"),
+                d.get("binance_return_3s_bps"),
+                d.get("binance_return_5s_bps"),
+                d.get("binance_return_10s_bps"),
+                d.get("binance_return_30s_bps"),
+                d.get("binance_return_60s_bps"),
+                d.get("binance_taker_flow_1s"),
+                d.get("binance_taker_flow_2s"),
+                d.get("binance_taker_flow_3s"),
+                d.get("binance_taker_flow_5s"),
+                d.get("binance_taker_flow_10s"),
+                d.get("binance_taker_flow_30s"),
+                d.get("binance_taker_flow_60s"),
+                d.get("binance_top1_depth_imbalance"),
+                d.get("binance_top5_depth_imbalance"),
+                d.get("binance_top20_depth_imbalance"),
+                1 if d.get("binance_is_valid") else 0,
+                d.get("source_to_receive_latency_ms"),
+                d.get("inter_feed_receive_skew_ms", 0),
+                1 if d.get("is_stale") else 0,
+                d.get("stale_reason"),
+                1 if d.get("is_valid") else 0,
+                d.get("raw_payload_id"),
+                d.get("raw_json", "{}"),
+            ))
+
+        if conn is not None:
+            conn.executemany(sql, rows)
+        else:
+            with self._get_connection() as c:
+                c.executemany(sql, rows)
+
+    def get_leadlag_v2_samples(
+        self,
+        round_slug: str | None = None,
+        experiment_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve stored leadlag v2 samples, optionally filtered by round and experiment."""
+        sql = "SELECT * FROM leadlag_v2_samples"
+        clauses = []
+        params = []
+        if round_slug:
+            clauses.append("round_slug = ?")
+            params.append(round_slug)
+        if experiment_id:
+            clauses.append("experiment_id = ?")
+            params.append(experiment_id)
+        if clauses:
+            sql += " WHERE " + " AND ".join(clauses)
+        sql += " ORDER BY sample_target_ts_ms ASC"
+        with self._get_connection() as conn:
+            return [dict(r) for r in conn.execute(sql, tuple(params)).fetchall()]
+
+    def save_leadlag_v2_depth_events_batch(self, events: list[dict[str, Any]], conn: sqlite3.Connection | None = None) -> None:
+        """Batch persist raw Binance depth events for v2."""
+        if not events:
+            return
+        sql = """
+            INSERT OR REPLACE INTO leadlag_v2_binance_depth_events (
+                event_id, experiment_id, experiment_spec_hash, round_slug,
+                source_ts_ms, recv_ts_ms, local_monotonic_ns, first_update_id,
+                final_update_id, prev_final_update_id, best_bid, best_ask,
+                mid_price, raw_payload_id, raw_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        rows = [
+            (
+                e["event_id"],
+                e["experiment_id"],
+                e["experiment_spec_hash"],
+                e["round_slug"],
+                e.get("source_ts_ms"),
+                e["recv_ts_ms"],
+                e.get("local_monotonic_ns"),
+                e.get("first_update_id"),
+                e.get("final_update_id"),
+                e.get("prev_final_update_id"),
+                e["best_bid"],
+                e["best_ask"],
+                e["mid_price"],
+                e.get("raw_payload_id"),
+                e.get("raw_json", "{}"),
+            )
+            for e in events
+        ]
+        if conn is not None:
+            conn.executemany(sql, rows)
+        else:
+            with self._get_connection() as c:
+                c.executemany(sql, rows)
+
+    def save_leadlag_v2_trade_events_batch(self, events: list[dict[str, Any]], conn: sqlite3.Connection | None = None) -> None:
+        """Batch persist raw Binance trade events for v2 with agg_trade_id deduplication."""
+        if not events:
+            return
+        sql = """
+            INSERT OR IGNORE INTO leadlag_v2_binance_trade_events (
+                experiment_id, experiment_spec_hash, agg_trade_id, round_slug,
+                trade_ts_ms, recv_ts_ms, local_monotonic_ns, price, quantity,
+                is_buyer_maker, raw_payload_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        rows = [
+            (
+                e["experiment_id"],
+                e["experiment_spec_hash"],
+                e["agg_trade_id"],
+                e["round_slug"],
+                e["trade_ts_ms"],
+                e["recv_ts_ms"],
+                e.get("local_monotonic_ns"),
+                e["price"],
+                e["quantity"],
+                1 if e["is_buyer_maker"] else 0,
+                e.get("raw_payload_id"),
+            )
+            for e in events
+        ]
+        if conn is not None:
+            conn.executemany(sql, rows)
+        else:
+            with self._get_connection() as c:
+                c.executemany(sql, rows)
+
+    def save_leadlag_v2_poly_events_batch(self, events: list[dict[str, Any]], conn: sqlite3.Connection | None = None) -> None:
+        """Batch persist raw Polymarket book events for v2."""
+        if not events:
+            return
+        sql = """
+            INSERT OR REPLACE INTO leadlag_v2_polymarket_book_events (
+                event_id, experiment_id, experiment_spec_hash, round_slug,
+                token_id, provenance_mode, event_type, source_ts_ms, recv_ts_ms,
+                local_monotonic_ns, best_bid, best_ask, midpoint, spread,
+                raw_hash, raw_payload_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        rows = [
+            (
+                e["event_id"],
+                e["experiment_id"],
+                e["experiment_spec_hash"],
+                e["round_slug"],
+                e["token_id"],
+                e.get("provenance_mode", "WS_SNAPSHOT"),
+                e.get("event_type", "book"),
+                e.get("source_ts_ms"),
+                e["recv_ts_ms"],
+                e.get("local_monotonic_ns"),
+                e.get("best_bid"),
+                e.get("best_ask"),
+                e.get("midpoint"),
+                e.get("spread"),
+                e.get("raw_hash"),
+                e.get("raw_payload_id"),
+            )
+            for e in events
+        ]
+        if conn is not None:
+            conn.executemany(sql, rows)
+        else:
+            with self._get_connection() as c:
+                c.executemany(sql, rows)
+
+    def save_leadlag_v2_raw_payloads_batch(self, payloads: list[dict[str, Any]], conn: sqlite3.Connection | None = None) -> None:
+        """Batch persist lossless compressed raw wire payloads."""
+        if not payloads:
+            return
+        sql = """
+            INSERT OR REPLACE INTO leadlag_v2_raw_payloads (
+                payload_id, experiment_id, experiment_spec_hash, feed,
+                round_slug, recv_ts_ms, uncompressed_len, compressed_len,
+                sha256_hash, compressed_payload
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        rows = [
+            (
+                p["payload_id"],
+                p["experiment_id"],
+                p["experiment_spec_hash"],
+                p["feed"],
+                p["round_slug"],
+                p["recv_ts_ms"],
+                p["uncompressed_len"],
+                p["compressed_len"],
+                p["sha256_hash"],
+                p["compressed_payload"],
+            )
+            for p in payloads
+        ]
+        if conn is not None:
+            conn.executemany(sql, rows)
+        else:
+            with self._get_connection() as c:
+                c.executemany(sql, rows)
+
+    def get_leadlag_v2_raw_payload(self, payload_id: str) -> dict[str, Any] | None:
+        """Retrieve and decompress a raw wire payload, verifying integrity checksum."""
+        sql = "SELECT * FROM leadlag_v2_raw_payloads WHERE payload_id = ?"
+        with self._get_connection() as conn:
+            row = conn.execute(sql, (payload_id,)).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            decompressed = zlib.decompress(d["compressed_payload"])
+            actual_sha = hashlib.sha256(decompressed).hexdigest()
+            if actual_sha != d["sha256_hash"]:
+                raise ValueError(
+                    f"Integrity checksum mismatch for payload {payload_id}: "
+                    f"expected {d['sha256_hash']}, got {actual_sha}"
+                )
+            d["raw_bytes"] = decompressed
+            return d
+
+    def save_leadlag_v2_heartbeat(self, heartbeat: dict[str, Any]) -> None:
+        """Persist a collector v2 heartbeat snapshot."""
+        sql = """
+            INSERT INTO leadlag_v2_collector_heartbeat (
+                timestamp_utc, epoch_ms, pid, status, experiment_id,
+                experiment_spec_hash, is_pilot, physical_rounds_captured, total_samples,
+                valid_samples, stale_samples, binance_feed_status, polymarket_feed_status,
+                binance_depth_events, binance_trade_events, binance_unique_trades,
+                poly_snapshot_events, poly_delta_events, poly_rest_fallback_events,
+                binance_source_ts_present, binance_source_ts_missing,
+                poly_source_ts_present, poly_source_ts_missing,
+                binance_ts_coverage, poly_ts_coverage, taker_flow_60s_coverage,
+                malformed_events, unhandled_events, duplicate_trades,
+                latency_metrics_json, extra_json
+            ) VALUES (
+                ?, ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?,
+                ?, ?,
+                ?, ?, ?,
+                ?, ?, ?,
+                ?, ?
+            )
+        """
+        params = (
+            heartbeat["timestamp_utc"],
+            heartbeat["epoch_ms"],
+            heartbeat["pid"],
+            heartbeat["status"],
+            heartbeat["experiment_id"],
+            heartbeat["experiment_spec_hash"],
+            1 if heartbeat.get("is_pilot") else 0,
+            heartbeat.get("physical_rounds_captured", 0),
+            heartbeat.get("total_samples", 0),
+            heartbeat.get("valid_samples", 0),
+            heartbeat.get("stale_samples", 0),
+            heartbeat.get("binance_feed_status", "UNKNOWN"),
+            heartbeat.get("polymarket_feed_status", "UNKNOWN"),
+            heartbeat.get("binance_depth_events", 0),
+            heartbeat.get("binance_trade_events", 0),
+            heartbeat.get("binance_unique_trades", 0),
+            heartbeat.get("poly_snapshot_events", 0),
+            heartbeat.get("poly_delta_events", 0),
+            heartbeat.get("poly_rest_fallback_events", 0),
+            heartbeat.get("binance_source_ts_present", 0),
+            heartbeat.get("binance_source_ts_missing", 0),
+            heartbeat.get("poly_source_ts_present", 0),
+            heartbeat.get("poly_source_ts_missing", 0),
+            heartbeat.get("binance_ts_coverage", 0.0),
+            heartbeat.get("poly_ts_coverage", 0.0),
+            heartbeat.get("taker_flow_60s_coverage", 0.0),
+            heartbeat.get("malformed_events", 0),
+            heartbeat.get("unhandled_events", 0),
+            heartbeat.get("duplicate_trades", 0),
+            heartbeat.get("latency_metrics_json", "{}"),
+            heartbeat.get("extra_json", "{}"),
+        )
+        with self._get_connection() as conn:
+            conn.execute(sql, params)
+
+    def get_leadlag_v2_latest_heartbeat(self, experiment_id: str = "btc5m_leadlag_v2") -> dict[str, Any] | None:
+        """Retrieve the most recent heartbeat for leadlag v2 collector."""
+        sql = """
+            SELECT * FROM leadlag_v2_collector_heartbeat
+            WHERE experiment_id = ?
+            ORDER BY heartbeat_id DESC LIMIT 1
+        """
+        with self._get_connection() as conn:
+            row = conn.execute(sql, (experiment_id,)).fetchone()
+            return dict(row) if row else None
+
+    def get_leadlag_v2_audit_summary(self, experiment_id: str = "btc5m_leadlag_v2") -> dict[str, Any]:
+        """Aggregate statistical summary of leadlag v2 dataset quality and counts strictly isolated by experiment."""
+        with self._get_connection() as conn:
+            rounds_captured = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_rounds WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()[0]
+
+            rounds_completed = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_rounds WHERE experiment_id = ? AND status = 'COMPLETED'",
+                (experiment_id,),
+            ).fetchone()[0]
+
+            sample_counts = conn.execute("""
+                SELECT
+                    count(*) as total_samples,
+                    sum(CASE WHEN is_valid = 1 THEN 1 ELSE 0 END) as valid_samples,
+                    sum(CASE WHEN is_stale = 1 THEN 1 ELSE 0 END) as stale_samples,
+                    sum(CASE WHEN poly_source_ts_ms IS NOT NULL THEN 1 ELSE 0 END) as poly_src_ts_samples,
+                    sum(CASE WHEN binance_source_ts_ms IS NOT NULL THEN 1 ELSE 0 END) as binance_src_ts_samples,
+                    avg(source_to_receive_latency_ms) as avg_latency,
+                    avg(inter_feed_receive_skew_ms) as avg_skew,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_1s IS NOT NULL THEN 1 ELSE 0 END) as tf_1s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_2s IS NOT NULL THEN 1 ELSE 0 END) as tf_2s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_3s IS NOT NULL THEN 1 ELSE 0 END) as tf_3s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_5s IS NOT NULL THEN 1 ELSE 0 END) as tf_5s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_10s IS NOT NULL THEN 1 ELSE 0 END) as tf_10s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_30s IS NOT NULL THEN 1 ELSE 0 END) as tf_30s,
+                    sum(CASE WHEN is_valid = 1 AND binance_taker_flow_60s IS NOT NULL THEN 1 ELSE 0 END) as tf_60s
+                FROM leadlag_v2_samples
+                WHERE experiment_id = ?
+            """, (experiment_id,)).fetchone()
+
+            raw_depth = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_binance_depth_events WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()[0]
+            raw_trades = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_binance_trade_events WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()[0]
+            unique_trades = conn.execute(
+                "SELECT count(DISTINCT agg_trade_id) FROM leadlag_v2_binance_trade_events WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()[0]
+            raw_poly = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()[0]
+
+            poly_snapshots = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ? AND provenance_mode = 'WS_SNAPSHOT'",
+                (experiment_id,),
+            ).fetchone()[0]
+            poly_deltas = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ? AND provenance_mode = 'WS_DELTA'",
+                (experiment_id,),
+            ).fetchone()[0]
+            poly_rest = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ? AND provenance_mode = 'REST_FALLBACK'",
+                (experiment_id,),
+            ).fetchone()[0]
+
+            poly_src_present = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ? AND source_ts_ms IS NOT NULL",
+                (experiment_id,),
+            ).fetchone()[0]
+            poly_src_missing = conn.execute(
+                "SELECT count(*) FROM leadlag_v2_polymarket_book_events WHERE experiment_id = ? AND source_ts_ms IS NULL",
+                (experiment_id,),
+            ).fetchone()[0]
+
+            payload_stats = conn.execute(
+                "SELECT count(*), coalesce(sum(uncompressed_len), 0), coalesce(sum(compressed_len), 0) FROM leadlag_v2_raw_payloads WHERE experiment_id = ?",
+                (experiment_id,),
+            ).fetchone()
+
+            tot_s = int(sample_counts[0]) if sample_counts and sample_counts[0] else 0
+            val_s = int(sample_counts[1]) if sample_counts and sample_counts[1] else 0
+            stale_s = int(sample_counts[2]) if sample_counts and sample_counts[2] else 0
+            poly_ts_s = int(sample_counts[3]) if sample_counts and sample_counts[3] else 0
+            binance_ts_s = int(sample_counts[4]) if sample_counts and sample_counts[4] else 0
+
+            # Taker flow coverage on valid samples
+            tf_1s_cov = round(int(sample_counts[7]) / val_s, 4) if val_s > 0 and sample_counts[7] is not None else 0.0
+            tf_2s_cov = round(int(sample_counts[8]) / val_s, 4) if val_s > 0 and sample_counts[8] is not None else 0.0
+            tf_3s_cov = round(int(sample_counts[9]) / val_s, 4) if val_s > 0 and sample_counts[9] is not None else 0.0
+            tf_5s_cov = round(int(sample_counts[10]) / val_s, 4) if val_s > 0 and sample_counts[10] is not None else 0.0
+            tf_10s_cov = round(int(sample_counts[11]) / val_s, 4) if val_s > 0 and sample_counts[11] is not None else 0.0
+            tf_30s_cov = round(int(sample_counts[12]) / val_s, 4) if val_s > 0 and sample_counts[12] is not None else 0.0
+            tf_60s_cov = round(int(sample_counts[13]) / val_s, 4) if val_s > 0 and sample_counts[13] is not None else 0.0
+
+            raw_payload_count = int(payload_stats[0]) if payload_stats else 0
+            raw_uncompressed_bytes = int(payload_stats[1]) if payload_stats else 0
+            raw_compressed_bytes = int(payload_stats[2]) if payload_stats else 0
+            compression_ratio = round(raw_compressed_bytes / raw_uncompressed_bytes, 4) if raw_uncompressed_bytes > 0 else 0.0
+
+            return {
+                "experiment_id": experiment_id,
+                "physical_rounds_captured": int(rounds_captured),
+                "physical_rounds_completed": int(rounds_completed),
+                "total_samples": tot_s,
+                "valid_samples": val_s,
+                "stale_samples": stale_s,
+                "stale_rate": round(stale_s / tot_s, 4) if tot_s > 0 else 0.0,
+                "poly_timestamp_coverage": round(poly_ts_s / tot_s, 4) if tot_s > 0 else 0.0,
+                "binance_timestamp_coverage": round(binance_ts_s / tot_s, 4) if tot_s > 0 else 0.0,
+                "avg_source_to_receive_latency_ms": round(float(sample_counts[5]), 2) if sample_counts and sample_counts[5] is not None else None,
+                "avg_inter_feed_receive_skew_ms": round(float(sample_counts[6]), 2) if sample_counts and sample_counts[6] is not None else None,
+                "raw_binance_depth_events": int(raw_depth),
+                "raw_binance_trade_events": int(raw_trades),
+                "unique_binance_trade_events": int(unique_trades),
+                "raw_polymarket_book_events": int(raw_poly),
+                "poly_snapshot_events": int(poly_snapshots),
+                "poly_delta_events": int(poly_deltas),
+                "poly_rest_fallback_events": int(poly_rest),
+                "poly_source_ts_present": int(poly_src_present),
+                "poly_source_ts_missing": int(poly_src_missing),
+                "poly_source_coverage": round(poly_src_present / (poly_src_present + poly_src_missing), 4) if (poly_src_present + poly_src_missing) > 0 else 0.0,
+                "taker_flow_1s_coverage": tf_1s_cov,
+                "taker_flow_2s_coverage": tf_2s_cov,
+                "taker_flow_3s_coverage": tf_3s_cov,
+                "taker_flow_5s_coverage": tf_5s_cov,
+                "taker_flow_10s_coverage": tf_10s_cov,
+                "taker_flow_30s_coverage": tf_30s_cov,
+                "taker_flow_60s_coverage": tf_60s_cov,
+                "raw_payload_count": raw_payload_count,
+                "raw_uncompressed_bytes": raw_uncompressed_bytes,
+                "raw_compressed_bytes": raw_compressed_bytes,
+                "compression_ratio": compression_ratio,
             }
 
 
