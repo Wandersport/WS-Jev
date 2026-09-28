@@ -29,6 +29,7 @@ import hashlib
 import json
 import math
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -868,3 +869,88 @@ def test_binance_ws_url_uses_trade_stream() -> None:
     from pm_research.research.btc5m.leadlag_v2_collector import BINANCE_WS_URL
     assert "btcusdt@trade" in BINANCE_WS_URL
     assert "aggTrade" not in BINANCE_WS_URL, "aggTrade stream is deprecated on Binance futures"
+
+
+def test_operational_storage_guard_aborts_below_floor() -> None:
+    """Storage guard must halt collector cleanly when free disk falls below the safe floor."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        # Set floor to an impossibly high value (1 PB) to guarantee current disk is below floor
+        impossibly_high_floor = 1024 * 1024 * 1024 * 1024 * 1024  # 1 PiB
+        collector = LeadLagCollectorV2(
+            db=db,
+            lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            min_disk_free_bytes=impossibly_high_floor,
+        )
+
+        now = 1000.0
+        result = collector._check_disk_space(now)
+        assert result is False
+        assert collector._collection_failed is True
+        assert "LOW_DISK_FREE" in (collector._collection_failure_reason or "")
+        assert collector._stop_event.is_set() is True
+
+
+def test_operational_storage_guard_passes_above_floor() -> None:
+    """Storage guard must return True and not halt when free disk is above floor."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        # Set floor to 1 byte
+        tiny_floor = 1
+        collector = LeadLagCollectorV2(
+            db=db,
+            lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            min_disk_free_bytes=tiny_floor,
+        )
+
+        now = 1000.0
+        result = collector._check_disk_space(now)
+        assert result is True
+        assert collector._collection_failed is False
+        assert collector._stop_event.is_set() is False
+        assert collector._disk_free_bytes is not None
+        assert collector._disk_free_bytes > tiny_floor
+
+
+def test_sustained_health_watchdog_tolerates_transient_and_aborts_on_sustained() -> None:
+    """Production health watchdog must tolerate transient reconnects but abort on sustained 60s failure."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        collector = LeadLagCollectorV2(
+            db=db,
+            lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            is_pilot=False,  # Production mode
+        )
+
+        # 1. During initial 120s warmup, watchdog is silent
+        collector._last_trade_recv_time = time.time() - 90.0  # trade silence
+        collector._check_sustained_health(elapsed_sec=60.0)  # still in warmup
+        assert collector._consecutive_unhealthy_heartbeats == 0
+
+        # 2. After warmup (elapsed=150s), evaluate unhealthy state (trade silence > 60s)
+        # Evaluations 1 to 5: must tolerate transient glitch and NOT abort
+        for i in range(1, 6):
+            collector._check_sustained_health(elapsed_sec=150.0)
+            assert collector._consecutive_unhealthy_heartbeats == i
+            assert collector._stop_event.is_set() is False
+            assert collector._collection_failed is False
+
+        # 3. Test recovery: if feed recovers before 6th evaluation, counter resets
+        collector._last_trade_recv_time = time.time()  # feed resumed!
+        collector._check_sustained_health(elapsed_sec=151.0)
+        assert collector._consecutive_unhealthy_heartbeats == 0
+        assert collector._stop_event.is_set() is False
+
+        # 4. Now simulate sustained failure for 6 consecutive evaluations
+        collector._last_trade_recv_time = time.time() - 90.0  # silent again
+        for i in range(1, 6):
+            collector._check_sustained_health(elapsed_sec=160.0)
+            assert collector._consecutive_unhealthy_heartbeats == i
+            assert collector._stop_event.is_set() is False
+
+        # The 6th consecutive failure triggers sustained abort
+        collector._check_sustained_health(elapsed_sec=160.0)
+        assert collector._consecutive_unhealthy_heartbeats == 6
+        assert collector._collection_failed is True
+        assert collector._stop_event.is_set() is True
+        assert "SUSTAINED_FAILURE" in (collector._collection_failure_reason or "")

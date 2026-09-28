@@ -26,6 +26,7 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import signal
 import threading
 import time
@@ -55,6 +56,10 @@ POLY_WS_URL: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 DEFAULT_V2_LOCK_FILE: str = "data/btc5m_leadlag_v2_collector.lock"
 DEFAULT_V2_PILOT_LOCK_FILE: str = "data/btc5m_leadlag_v2_pilot.lock"
 
+# Operational storage guard & sustained-health watchdog constants
+DEFAULT_MIN_DISK_FREE_BYTES: int = 2 * 1024 * 1024 * 1024  # 2.0 GiB minimum safe operating floor
+DEFAULT_MAX_CONSECUTIVE_UNHEALTHY: int = 6  # 6 consecutive unhealthy evaluations (~60s sustained) before abort
+
 
 def compute_percentiles(values: list[float | int]) -> dict[str, float]:
     """Compute standard summary percentiles and mean."""
@@ -81,6 +86,7 @@ class LeadLagCollectorV2:
         target_physical_rounds: int = 500,
         is_pilot: bool = False,
         lock_file_path: str | None = None,
+        min_disk_free_bytes: int = DEFAULT_MIN_DISK_FREE_BYTES,
     ) -> None:
         self.db = db
         self.target_physical_rounds = target_physical_rounds
@@ -183,6 +189,20 @@ class LeadLagCollectorV2:
 
         # Start wall time for warmup / fail-fast checks
         self._start_time_sec: float = time.time()
+
+        # Storage guard
+        self.min_disk_free_bytes: int = min_disk_free_bytes
+        self._disk_free_bytes: int | None = None
+        self._last_disk_check_sec: float = 0.0
+
+        # Sustained health watchdog state (production protection)
+        self._consecutive_unhealthy_heartbeats: int = 0
+        self._consecutive_unhealthy_reason: str | None = None
+        self._collection_failed: bool = False
+        self._collection_failure_reason: str | None = None
+        self._last_trade_recv_time: float = time.time()
+        self._last_depth_recv_time: float = time.time()
+        self._last_poly_recv_time: float = time.time()
 
     def acquire_lock(self) -> None:
         """Acquire non-blocking single-instance lock."""
@@ -310,6 +330,7 @@ class LeadLagCollectorV2:
 
         try:
             if "depth" in s_lower or e_type == "depthUpdate":
+                self._last_depth_recv_time = time.time()
                 self._depth_events_received += 1
                 bids = [(float(p), float(q)) for p, q in payload.get("b", [])]
                 asks = [(float(p), float(q)) for p, q in payload.get("a", [])]
@@ -373,6 +394,7 @@ class LeadLagCollectorV2:
                         self._raw_depth_events.append(ev)
 
             elif "aggtrade" in s_lower or "trade" in s_lower or e_type in ("aggTrade", "trade"):
+                self._last_trade_recv_time = time.time()
                 self._aggtrade_events_received += 1
                 # Support both legacy aggTrade (field 'a') and current trade (field 't') formats
                 agg_id = int(payload.get("a") or payload.get("t"))
@@ -529,6 +551,7 @@ class LeadLagCollectorV2:
             return
 
         payload_id = self._persist_lossless_raw_payload("polymarket", raw_bytes, recv_ms)
+        self._last_poly_recv_time = time.time()
 
         try:
             items = data if isinstance(data, list) else [data]
@@ -1134,6 +1157,13 @@ class LeadLagCollectorV2:
             "sample_target_error": compute_percentiles(list(self._sample_target_errors_ms)),
         }
 
+        disk_free_gb = round(self._disk_free_bytes / (1024 ** 3), 2) if self._disk_free_bytes is not None else None
+        watchdog_status = (
+            "NOT_APPLICABLE (PILOT)" if self.is_pilot
+            else "HEALTHY" if self._consecutive_unhealthy_heartbeats == 0
+            else f"DEGRADED ({self._consecutive_unhealthy_heartbeats}/{DEFAULT_MAX_CONSECUTIVE_UNHEALTHY}: {self._consecutive_unhealthy_reason})"
+        )
+
         hb = {
             "timestamp_utc": datetime.now(timezone.utc).isoformat(),
             "epoch_ms": int(now * 1000),
@@ -1171,6 +1201,10 @@ class LeadLagCollectorV2:
                 "depth_continuity_gaps": self._binance_depth_continuity_gaps,
                 "missing_key_count": self._missing_key_count,
                 "parser_exception_count": self._parser_exception_count,
+                "disk_free_bytes": self._disk_free_bytes,
+                "disk_free_gb": disk_free_gb,
+                "health_watchdog_status": watchdog_status,
+                "health_watchdog_unhealthy_count": self._consecutive_unhealthy_heartbeats,
             }),
         }
         self.db.save_leadlag_v2_heartbeat(hb)
@@ -1293,6 +1327,125 @@ class LeadLagCollectorV2:
                 self._stop_event.set()
 
     # ==========================================================================
+    # Operational Storage Guard (Section 7)
+    # ==========================================================================
+
+    def _check_disk_space(self, now: float) -> bool:
+        """Periodically measure filesystem free space and guard against disk exhaustion.
+
+        Returns True if disk space is healthy (above floor), False if low disk emergency.
+        """
+        if now - self._last_disk_check_sec < 10.0:
+            return True
+        self._last_disk_check_sec = now
+
+        try:
+            target_dir = self.lock_file_path.parent.resolve()
+            usage = shutil.disk_usage(target_dir)
+            self._disk_free_bytes = usage.free
+
+            if self._disk_free_bytes < self.min_disk_free_bytes:
+                free_gb = self._disk_free_bytes / (1024 ** 3)
+                floor_gb = self.min_disk_free_bytes / (1024 ** 3)
+                logger.error(
+                    f"STORAGE GUARD ABORT: Only {free_gb:.2f} GiB remaining (floor: {floor_gb:.2f} GiB)! "
+                    "Stopping collector cleanly to prevent filesystem/WAL corruption."
+                )
+                self._collection_failed = True
+                self._collection_failure_reason = f"LOW_DISK_FREE_{free_gb:.2f}GB_BELOW_{floor_gb:.2f}GB"
+                self._stop_event.set()
+                return False
+        except Exception as e:
+            logger.warning(f"Could not check disk usage: {e}")
+
+        return True
+
+    # ==========================================================================
+    # Sustained Health Watchdog (Section 6)
+    # ==========================================================================
+
+    def _check_sustained_health(self, elapsed_sec: float) -> None:
+        """Enforce sustained-health watchdog for non-pilot (production) data collection.
+
+        Protects against silent data collection degradation during the 42-hour run:
+        - Binance trade feed alive (no sustained trade silence >60s after warmup)
+        - Binance depth feed alive (no silence >30s)
+        - Polymarket book feed alive (no silence >30s)
+        - Binance source timestamp coverage >= 99%
+        - Polymarket source timestamp coverage >= 95%
+        - Taker-flow post-warmup coverage >= 95%
+        - Excessive parser exceptions (>50)
+
+        Tolerates transient reconnects by requiring 6 consecutive unhealthy
+        evaluations (~60s sustained) before failing closed.
+        """
+        if self.is_pilot:
+            return
+
+        # Warmup period: allow 120s for initial websocket connections, subscriptions, and lookbacks
+        if elapsed_sec < 120.0:
+            return
+
+        now = time.time()
+        unhealthy_reasons: list[str] = []
+
+        # 1. Binance trade feed alive
+        if now - self._last_trade_recv_time > 60.0:
+            unhealthy_reasons.append(f"BINANCE_TRADE_SILENCE_{int(now - self._last_trade_recv_time)}S")
+
+        # 2. Binance depth feed alive
+        if now - self._last_depth_recv_time > 30.0:
+            unhealthy_reasons.append(f"BINANCE_DEPTH_SILENCE_{int(now - self._last_depth_recv_time)}S")
+
+        # 3. Polymarket book feed alive
+        if now - self._last_poly_recv_time > 30.0:
+            unhealthy_reasons.append(f"POLY_FEED_SILENCE_{int(now - self._last_poly_recv_time)}S")
+
+        # 4. Excessive parser exceptions
+        if self._parser_exception_count > 50:
+            unhealthy_reasons.append(f"EXCESSIVE_PARSER_EXCEPTIONS_{self._parser_exception_count}")
+
+        # 5. Binance source timestamp coverage
+        bn_tot = self._binance_source_ts_present + self._binance_source_ts_missing
+        if bn_tot >= 100:
+            bn_cov = self._binance_source_ts_present / bn_tot
+            if bn_cov < 0.99:
+                unhealthy_reasons.append(f"BINANCE_TS_COV_{bn_cov*100:.1f}PCT_BELOW_99")
+
+        # 6. Polymarket source timestamp coverage
+        poly_tot = self._poly_source_ts_present + self._poly_source_ts_missing
+        if poly_tot >= 100:
+            poly_cov = self._poly_source_ts_present / poly_tot
+            if poly_cov < 0.95:
+                unhealthy_reasons.append(f"POLY_TS_COV_{poly_cov*100:.1f}PCT_BELOW_95")
+
+        # 7. Taker-flow coverage post-warmup
+        tf_cov = self._compute_actual_taker_flow_coverage()
+        if tf_cov > 0.0 and tf_cov < 0.95:
+            unhealthy_reasons.append(f"TAKER_FLOW_COV_{tf_cov*100:.1f}PCT_BELOW_95")
+
+        if unhealthy_reasons:
+            self._consecutive_unhealthy_heartbeats += 1
+            self._consecutive_unhealthy_reason = "; ".join(unhealthy_reasons)
+            logger.warning(
+                f"Health watchdog warning ({self._consecutive_unhealthy_heartbeats}/{DEFAULT_MAX_CONSECUTIVE_UNHEALTHY}): "
+                f"{self._consecutive_unhealthy_reason}"
+            )
+            if self._consecutive_unhealthy_heartbeats >= DEFAULT_MAX_CONSECUTIVE_UNHEALTHY:
+                logger.error(
+                    f"SUSTAINED HEALTH WATCHDOG ABORT: Collector degraded for 60s sustained! "
+                    f"Reasons: {self._consecutive_unhealthy_reason}"
+                )
+                self._collection_failed = True
+                self._collection_failure_reason = f"SUSTAINED_FAILURE: {self._consecutive_unhealthy_reason}"
+                self._stop_event.set()
+        else:
+            if self._consecutive_unhealthy_heartbeats > 0:
+                logger.info("Health watchdog recovered to healthy state.")
+            self._consecutive_unhealthy_heartbeats = 0
+            self._consecutive_unhealthy_reason = None
+
+    # ==========================================================================
     # Main Execution Loop
     # ==========================================================================
 
@@ -1325,6 +1478,10 @@ class LeadLagCollectorV2:
 
                 # Enforce fail-fast conditions in pilot mode
                 self._check_pilot_fail_fast(elapsed)
+                # Enforce sustained health watchdog in production mode
+                self._check_sustained_health(elapsed)
+                # Check filesystem free space guard
+                self._check_disk_space(now)
                 if self._stop_event.is_set():
                     break
 
@@ -1368,3 +1525,5 @@ class LeadLagCollectorV2:
             logger.info("LeadLagCollectorV2 stopped cleanly.")
             if self._pilot_failed:
                 raise RuntimeError(f"Pilot failed fast due to: {self._pilot_failure_reason}")
+            if self._collection_failed:
+                raise RuntimeError(f"Collector aborted by watchdog: {self._collection_failure_reason}")

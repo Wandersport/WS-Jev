@@ -1511,12 +1511,23 @@ def cmd_btc5m_leadlag_v2_status(args: argparse.Namespace) -> int:
     print(f"  TAKER_FLOW_10S_COVERAGE:   {summary['taker_flow_10s_coverage'] * 100:.1f}%")
     print(f"  TAKER_FLOW_30S_COVERAGE:   {summary['taker_flow_30s_coverage'] * 100:.1f}%")
     print(f"  TAKER_FLOW_60S_COVERAGE:   {summary['taker_flow_60s_coverage'] * 100:.1f}%")
+    extra_json = hb.get("extra_json") or "{}"
+    try:
+        extra = json.loads(extra_json)
+    except Exception:
+        extra = {}
+    disk_free_gb = extra.get("disk_free_gb")
+    watchdog_st = extra.get("health_watchdog_status", "NOT_APPLICABLE (PILOT)" if is_pilot else "HEALTHY")
+
     print("-" * 80)
     print("DIAGNOSTICS & PARSER INTEGRITY:")
     print(f"  MALFORMED_EVENTS:          {hb.get('malformed_events', 0)}")
     print(f"  UNHANDLED_EVENTS:          {hb.get('unhandled_events', 0)}")
     print(f"  RAW_PAYLOAD_COUNT:         {summary['raw_payload_count']}")
     print(f"  RAW_COMPRESSED_BYTES:      {summary['raw_compressed_bytes']:,} bytes ({summary['compression_ratio']*100:.1f}% ratio)")
+    if disk_free_gb is not None:
+        print(f"  STORAGE_FREE_DISK:         {disk_free_gb} GiB")
+    print(f"  HEALTH_WATCHDOG_STATUS:    {watchdog_st}")
     print("-" * 80)
     print("LATENCY & TIMING DISTRIBUTIONS (ms):")
     print(f"  Binance Wire Latency:      p50={bn_lat.get('p50', 0)}ms, p95={bn_lat.get('p95', 0)}ms, p99={bn_lat.get('p99', 0)}ms, max={bn_lat.get('max', 0)}ms")

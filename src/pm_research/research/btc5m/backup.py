@@ -16,7 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 DEFAULT_BACKUP_DIR: Path = Path("data/backups")
-DEFAULT_MAX_BACKUPS: int = 5
+DEFAULT_MAX_BACKUPS: int = 10
 
 
 def backup_database(
