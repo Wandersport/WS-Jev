@@ -44,6 +44,10 @@ class EvaluationMetrics:
     mean_log_loss: float | None
     avg_latency_ms: float | None = None
     total_cost: float | None = None
+    sensitivity: float = 0.0
+    specificity: float = 0.0
+    macro_f1: float = 0.0
+    mcc: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -57,6 +61,10 @@ class EvaluationMetrics:
             "conditional_accuracy": round(self.conditional_accuracy, 4),
             "effective_accuracy": round(self.effective_accuracy, 4),
             "balanced_accuracy": round(self.balanced_accuracy, 4),
+            "sensitivity": round(self.sensitivity, 4),
+            "specificity": round(self.specificity, 4),
+            "macro_f1": round(self.macro_f1, 4),
+            "mcc": round(self.mcc, 4),
             "confusion_matrix": {
                 "tp": self.tp,
                 "fp": self.fp,
@@ -77,6 +85,22 @@ class EvaluationMetrics:
                 round(self.total_cost, 6) if self.total_cost is not None else None
             ),
         }
+
+
+def convert_binary_confidence_to_positive_probability(
+    choice: str,
+    confidence: float | None,
+    positive_choice: str = CHOICE_MEANINGFUL_MOVE,
+    negative_choice: str = CHOICE_QUIET,
+) -> float | None:
+    """Convert confidence in chosen binary label to probability of positive class."""
+    if confidence is None or choice == ABSTAIN_CHOICE:
+        return None
+    if choice == positive_choice:
+        return float(confidence)
+    elif choice == negative_choice:
+        return float(1.0 - confidence)
+    return None
 
 
 def compute_metrics(
@@ -152,6 +176,18 @@ def compute_metrics(
     spec = (tn / (tn + fp)) if (tn + fp) > 0 else 0.0
     balanced_acc = (sens + spec) / 2.0 if n_acted > 0 else 0.0
 
+    # Macro F1
+    prec_pos = (tp / (tp + fp)) if (tp + fp) > 0 else 0.0
+    f1_pos = (2.0 * prec_pos * sens / (prec_pos + sens)) if (prec_pos + sens) > 0 else 0.0
+    prec_neg = (tn / (tn + fn)) if (tn + fn) > 0 else 0.0
+    f1_neg = (2.0 * prec_neg * spec / (prec_neg + spec)) if (prec_neg + spec) > 0 else 0.0
+    macro_f1 = (f1_pos + f1_neg) / 2.0
+
+    # Matthews Correlation Coefficient (MCC)
+    mcc_num = float(tp * tn - fp * fn)
+    mcc_den = math.sqrt(float((tp + fp) * (tp + fn) * (tn + fp) * (tn + fn)))
+    mcc = (mcc_num / mcc_den) if mcc_den > 0 else 0.0
+
     mean_brier = (sum(brier_scores) / len(brier_scores)) if brier_scores else None
     mean_ll = (sum(log_losses) / len(log_losses)) if log_losses else None
 
@@ -174,6 +210,10 @@ def compute_metrics(
         mean_log_loss=mean_ll,
         avg_latency_ms=avg_latency_ms,
         total_cost=total_cost if total_cost > 0 else None,
+        sensitivity=sens,
+        specificity=spec,
+        macro_f1=macro_f1,
+        mcc=mcc,
     )
 
 
@@ -182,12 +222,13 @@ def compute_selective_prediction_curve(
     # tuple: (predicted_choice, true_label, confidence)
     thresholds: tuple[float, ...] = (0.0, 0.5, 0.6, 0.7, 0.8, 0.9),
 ) -> list[dict[str, Any]]:
-    """Evaluate coverage vs conditional accuracy across confidence thresholds."""
+    """Evaluate coverage, conditional accuracy, and balanced accuracy across confidence thresholds."""
     results: list[dict[str, Any]] = []
 
     for tau in thresholds:
         acted_count = 0
         correct_count = 0
+        tp_tau = fp_tau = tn_tau = fn_tau = 0
 
         for pred_choice, true_label, conf in predictions_with_conf:
             if pred_choice == ABSTAIN_CHOICE:
@@ -196,6 +237,18 @@ def compute_selective_prediction_curve(
             c = conf if conf is not None else 1.0
             if c >= tau:
                 acted_count += 1
+                is_pos = true_label == CHOICE_MEANINGFUL_MOVE
+                if pred_choice == CHOICE_MEANINGFUL_MOVE:
+                    if is_pos:
+                        tp_tau += 1
+                    else:
+                        fp_tau += 1
+                elif pred_choice == CHOICE_QUIET:
+                    if not is_pos:
+                        tn_tau += 1
+                    else:
+                        fn_tau += 1
+
                 if pred_choice == true_label:
                     correct_count += 1
 
@@ -203,12 +256,17 @@ def compute_selective_prediction_curve(
         cov = (acted_count / total) if total > 0 else 0.0
         acc = (correct_count / acted_count) if acted_count > 0 else 0.0
 
+        sens_tau = (tp_tau / (tp_tau + fn_tau)) if (tp_tau + fn_tau) > 0 else 0.0
+        spec_tau = (tn_tau / (tn_tau + fp_tau)) if (tn_tau + fp_tau) > 0 else 0.0
+        bal_acc = (sens_tau + spec_tau) / 2.0 if acted_count > 0 else 0.0
+
         results.append(
             {
                 "confidence_threshold": tau,
                 "n_acted": acted_count,
                 "coverage_rate": round(cov, 4),
                 "conditional_accuracy": round(acc, 4),
+                "balanced_accuracy": round(bal_acc, 4),
             }
         )
 
@@ -226,33 +284,62 @@ def run_round_bootstrap(
     N = len(true_labels)
     models = list(model_predictions.keys())
 
-    # Pre-allocate bootstrap accuracies
+    # Pre-allocate bootstrap accuracies and balanced accuracies
     model_effective_accs: dict[str, list[float]] = {m: [] for m in models}
-    paired_diffs: dict[str, list[float]] = {}
+    model_balanced_accs: dict[str, list[float]] = {m: [] for m in models}
+    paired_diffs_acc: dict[str, list[float]] = {}
+    paired_diffs_bal_acc: dict[str, list[float]] = {}
     jev_key = "typesafe/jev-1.13" if "typesafe/jev-1.13" in models else models[0]
 
     for m in models:
         if m != jev_key:
-            paired_diffs[f"{jev_key}_minus_{m}"] = []
+            paired_diffs_acc[f"{jev_key}_minus_{m}"] = []
+            paired_diffs_bal_acc[f"{jev_key}_minus_{m}"] = []
 
     for _ in range(n_bootstraps):
         # Sample round indices with replacement
         sample_indices = [rng.randint(0, N - 1) for _ in range(N)]
 
         accs_this_round: dict[str, float] = {}
+        bal_accs_this_round: dict[str, float] = {}
+
         for m in models:
             preds = model_predictions[m]
-            correct = sum(
-                1 for idx in sample_indices if preds[idx] == true_labels[idx]
-            )
-            eff_acc = correct / N
-            model_effective_accs[m].append(eff_acc)
-            accs_this_round[m] = eff_acc
+            tp = fp = tn = fn = 0
+            correct = 0
 
-        for diff_k in paired_diffs:
+            for idx in sample_indices:
+                p_c = preds[idx]
+                t_c = true_labels[idx]
+                if p_c == t_c:
+                    correct += 1
+                if p_c == CHOICE_MEANINGFUL_MOVE:
+                    if t_c == CHOICE_MEANINGFUL_MOVE:
+                        tp += 1
+                    else:
+                        fp += 1
+                elif p_c == CHOICE_QUIET:
+                    if t_c != CHOICE_MEANINGFUL_MOVE:
+                        tn += 1
+                    else:
+                        fn += 1
+
+            eff_acc = correct / N
+            sens = (tp / (tp + fn)) if (tp + fn) > 0 else 0.0
+            spec = (tn / (tn + fp)) if (tn + fp) > 0 else 0.0
+            bal_acc = (sens + spec) / 2.0
+
+            model_effective_accs[m].append(eff_acc)
+            model_balanced_accs[m].append(bal_acc)
+            accs_this_round[m] = eff_acc
+            bal_accs_this_round[m] = bal_acc
+
+        for diff_k in paired_diffs_acc:
             base_m = diff_k.replace(f"{jev_key}_minus_", "")
-            diff = accs_this_round[jev_key] - accs_this_round[base_m]
-            paired_diffs[diff_k].append(diff)
+            diff_acc = accs_this_round[jev_key] - accs_this_round[base_m]
+            diff_bal = bal_accs_this_round[jev_key] - bal_accs_this_round[base_m]
+            paired_diffs_acc[diff_k].append(diff_acc)
+            paired_diffs_bal_acc[diff_k].append(diff_bal)
 
     def ci95(vals: list[float]) -> dict[str, float]:
         sorted_v = sorted(vals)
@@ -269,15 +356,27 @@ def run_round_bootstrap(
         "n_bootstraps": n_bootstraps,
         "n_samples": N,
         "models": {m: ci95(model_effective_accs[m]) for m in models},
+        "models_balanced_acc": {m: ci95(model_balanced_accs[m]) for m in models},
         "paired_differences": {},
+        "paired_differences_balanced_acc": {},
     }
 
-    for diff_k, diff_vals in paired_diffs.items():
+    for diff_k, diff_vals in paired_diffs_acc.items():
         ci = ci95(diff_vals)
-        p_superior = sum(1 for d in diff_vals if d > 0) / len(diff_vals)
+        sup_fraction = sum(1 for d in diff_vals if d > 0) / len(diff_vals)
         summary_out["paired_differences"][diff_k] = {
             **ci,
-            "p_jev_superior": round(p_superior, 4),
+            "bootstrap_superiority_fraction": round(sup_fraction, 4),
+            "p_jev_superior": round(sup_fraction, 4),  # backwards compatibility
+            "is_statistically_significant": ci["ci_lower"] > 0 or ci["ci_upper"] < 0,
+        }
+
+    for diff_k, diff_vals in paired_diffs_bal_acc.items():
+        ci = ci95(diff_vals)
+        sup_fraction = sum(1 for d in diff_vals if d > 0) / len(diff_vals)
+        summary_out["paired_differences_balanced_acc"][diff_k] = {
+            **ci,
+            "bootstrap_superiority_fraction": round(sup_fraction, 4),
             "is_statistically_significant": ci["ci_lower"] > 0 or ci["ci_upper"] < 0,
         }
 

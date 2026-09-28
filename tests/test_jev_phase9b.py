@@ -197,6 +197,7 @@ def test_baselines_prediction():
     sample = make_dummy_sample("r_base", binance_ret_30s=10.0, poly_spread=0.01)
 
     maj = MajorityBaseline()
+    maj.fit([sample])
     p_maj = maj.predict(sample)
     assert p_maj.choice == CHOICE_MEANINGFUL_MOVE
 

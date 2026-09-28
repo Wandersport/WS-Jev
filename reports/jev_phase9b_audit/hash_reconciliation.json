@@ -1,0 +1,9 @@
+{
+  "task_id": "meaningful_poly_move_30s_v1",
+  "task_spec_hash": "2b8dd4f5d3eb91fb2227c3bb2bc40ed38e1f4b114e40fd53b4f3279bfba79109",
+  "strategy_or_attempt_hash": "2b8dd4f5d3eb91fb2227c3bb2bc40ed38e1f4b114e40fd53b4f3279bfba79109",
+  "hashes_match": true,
+  "hallucinated_terminal_hash": "75e0326447cbe60ce6e60bda8456f96eefb4081c790fc7e974e6a0094e9f7ee3",
+  "hash_reporting_defect_confirmed": true,
+  "root_cause_explanation": "The hash '75e0326447cbe60ce6e60bda8456f96eefb4081c790fc7e974e6a0094e9f7ee3' was an assistant text formatting artifact generated in step 1026. It has zero occurrences in code, test files, report manifests, or database records. The canonical, deterministically computed task specification hash is '2b8dd4f5d3eb91fb2227c3bb2bc40ed38e1f4b114e40fd53b4f3279bfba79109'."
+}

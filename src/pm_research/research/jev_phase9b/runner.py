@@ -100,6 +100,7 @@ class Phase9bRunner:
         ridge_baseline.fit(train_samples)
 
         maj_baseline = MajorityBaseline()
+        maj_baseline.fit(train_samples)
         rule_baseline = DeterministicRuleBaseline()
         rand_baseline = RandomBaseline(seed=42)
         abs_baseline = AlwaysAbstainBaseline()

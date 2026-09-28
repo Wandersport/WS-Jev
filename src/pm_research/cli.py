@@ -1902,6 +1902,31 @@ def cmd_jev_phase9b_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_phase9b_audit(args: argparse.Namespace) -> int:
+    """Execute Phase 9B.1 retrospective result integrity audit on existing btc5m_leadlag_v1 data."""
+    from pm_research.research.jev_phase9b_audit import generate_phase9b_audit_reports
+
+    db_path = getattr(args, "db", None) or "data/pm_research.db"
+    out_dir = getattr(args, "output_dir", None) or "reports/jev_phase9b_audit"
+
+    print("\n" + "=" * 80)
+    print("  [!] PHASE 9B.1 — JEV RETROSPECTIVE RESULT INTEGRITY AUDIT")
+    print(f"      Database: {db_path}")
+    print(f"      Reports:  {out_dir}")
+    print("      API Mode: STRICT ZERO-CALL AUDIT (cached responses only)")
+    print("=" * 80)
+
+    reports = generate_phase9b_audit_reports(output_dir=out_dir, db_path=db_path)
+    for k, p in reports.items():
+        print(f"  [SAVED] {k:32s} -> {p}")
+
+    print("\n" + "=" * 80)
+    print("  Phase 9B.1 audit completed successfully.")
+    print("  ALL RESULTS STRICTLY RETROSPECTIVE DEVELOPMENT DATA.")
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2273,6 +2298,13 @@ def main(argv: list[str] | None = None) -> int:
     p_p9b.add_argument("--dry-run", action="store_true", help="Evaluate dataset and baselines without calling OpenRouter API")
     p_p9b.add_argument("--output-dir", default="reports/jev_phase9b", help="Output directory for Phase 9B reports")
 
+    # jev-phase9b-audit (Phase 9B.1)
+    p_p9b_audit = subparsers.add_parser(
+        "jev-phase9b-audit",
+        help="Execute Phase 9B.1 retrospective result integrity audit on existing btc5m_leadlag_v1 data",
+    )
+    p_p9b_audit.add_argument("--output-dir", default="reports/jev_phase9b_audit", help="Output directory for Phase 9B.1 audit reports")
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -2323,6 +2355,7 @@ def main(argv: list[str] | None = None) -> int:
         "jev-lab-smoke": cmd_jev_lab_smoke,
         "jev-lab-audit": cmd_jev_lab_audit,
         "jev-phase9b-run": cmd_jev_phase9b_run,
+        "jev-phase9b-audit": cmd_jev_phase9b_audit,
     }
 
     handler = dispatch.get(args.subcommand)

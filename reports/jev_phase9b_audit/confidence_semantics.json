@@ -1,0 +1,12 @@
+{
+  "jev_confidence_semantics": "PROBABILITY_AND_CONFIDENCE_OF_CHOSEN_OPTION",
+  "mathematical_formula": "confidence = (p_choice - 1/3) / (1 - 1/3)",
+  "max_formula_deviation": 0.02,
+  "samples_verified": 480,
+  "original_brier_valid": false,
+  "original_logloss_valid": false,
+  "original_scoring_flaw": "The original Phase 9B runner naively mapped the third tuple element (resp.confidence) directly to P(MEANINGFUL_MOVE) without checking whether Jev chose MEANINGFUL_MOVE or QUIET. Because Jev chose QUIET in 356/480 rounds, its confidence in QUIET was inverted into an erroneous probability of MEANINGFUL_MOVE.",
+  "original_naive_brier_all_480": 0.396248,
+  "corrected_brier_all_480": 0.284581,
+  "corrected_logloss_all_480": 0.782828
+}

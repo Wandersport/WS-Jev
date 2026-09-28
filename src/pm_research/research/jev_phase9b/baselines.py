@@ -46,14 +46,31 @@ class BasePhase9bBaseline:
 class MajorityBaseline(BasePhase9bBaseline):
     """Majority class predictor derived strictly from training split."""
 
-    def __init__(self, majority_choice: str = CHOICE_MEANINGFUL_MOVE) -> None:
+    def __init__(self, majority_choice: str | None = None) -> None:
         self._majority_choice = majority_choice
+        self._is_fitted: bool = majority_choice is not None
 
     @property
     def name(self) -> str:
         return "baseline_majority_base_rate"
 
+    def fit(self, train_samples: list[Phase9bSample]) -> None:
+        """Derive the majority class label strictly from the training cohort."""
+        if not train_samples:
+            raise ValueError("train_samples cannot be empty")
+        counts: dict[str, int] = {}
+        for s in train_samples:
+            label = s.objective_label
+            counts[label] = counts.get(label, 0) + 1
+
+        # Deterministic tie-breaker
+        best_choice = max(sorted(counts.keys()), key=lambda k: counts[k])
+        self._majority_choice = best_choice
+        self._is_fitted = True
+
     def predict(self, sample: Phase9bSample) -> BaselinePrediction:
+        if not self._is_fitted or self._majority_choice is None:
+            raise ValueError("MajorityBaseline must be fitted on train split before predict")
         return BaselinePrediction(
             choice=self._majority_choice,
             probability_meaningful=1.0 if self._majority_choice == CHOICE_MEANINGFUL_MOVE else 0.0,
