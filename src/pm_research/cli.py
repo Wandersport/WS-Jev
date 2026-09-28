@@ -1662,6 +1662,189 @@ def cmd_btc5m_leadlag_analyze(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_jev_lab_status(args: argparse.Namespace) -> int:
+    """Display Jev Decision Research Lab status, registered tasks, and storage summary."""
+    from pm_research.research.jev_lab import CANONICAL_TASKS, JevLabStorage
+    from pm_research.storage.db import Database
+
+    db_path = args.db or "data/pm_research.db"
+    db = Database(db_path)
+    storage = JevLabStorage(db)
+    summary = storage.get_audit_summary()
+
+    print("\n" + "=" * 80)
+    print("  [!] JEV DECISION RESEARCH LAB STATUS (PHASE 9A)")
+    print(f"      Database: {db_path}")
+    print("=" * 80)
+    print("REGISTERED CANDIDATE DECISION TASKS:")
+    for task_id, task in CANONICAL_TASKS.items():
+        print(f"  [{task.status}] {task.task_id} (v{task.task_version}, type: {task.task_type}):")
+        print(f"    Choices:     {list(task.allowed_choices)} (Abstain: {task.optional_abstain})")
+        print(f"    Horizon:     {task.target_horizon} (Cutoff: {task.information_cutoff})")
+        print(f"    Description: {task.description}")
+
+    print("\nSTORAGE & REPOSITORY LEDGER:")
+    for k, v in summary.items():
+        print(f"  {k:28s}: {v}")
+
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_jev_lab_smoke(args: argparse.Namespace) -> int:
+    """Execute small development smoke test of Jev typed judgment and baselines."""
+    from datetime import datetime, timezone
+
+    from pm_research.research.jev_lab import (
+        TASK_MARKET_REGIME,
+        TASK_SETUP_GATING,
+        AlwaysAbstainProvider,
+        DecisionObservation,
+        JevDecisionProvider,
+        JevLabStorage,
+        MajorityBaseRateProvider,
+        RandomBaselineProvider,
+    )
+    from pm_research.research.jev_lab.providers import PINNED_JEV_MODEL
+    from pm_research.storage.db import Database
+    from pm_research.utils import generate_id
+
+    db_path = args.db or "data/pm_research.db"
+    db = Database(db_path)
+    storage = JevLabStorage(db)
+
+    print("\n" + "=" * 80)
+    print("  [!] JEV DECISION LAB SMOKE TEST (PHASE 9A - RESEARCH HARNESS ONLY)")
+    print(f"      Database: {db_path}")
+    print("=" * 80)
+
+    # 1. Register canonical tasks into storage
+    storage.save_task(TASK_SETUP_GATING)
+    storage.save_task(TASK_MARKET_REGIME)
+
+    # 2. Synthetic development observations
+    now = datetime.now(timezone.utc)
+    synthetic_obs = [
+        DecisionObservation(
+            observation_id=generate_id("obs"),
+            task_id=TASK_SETUP_GATING.task_id,
+            market_round_id="demo-btc-5m-1",
+            as_of_ts_utc=now,
+            state_payload={
+                "spread_bps": 1.2,
+                "top5_depth_imbalance": 0.35,
+                "realized_volatility_60s": 0.0015,
+                "taker_flow_60s": 0.42,
+                "notes": "Synthetic development sample: high depth imbalance, tight spread",
+            },
+            provenance="SYNTHETIC_DEVELOPMENT_FIXTURE",
+        ),
+        DecisionObservation(
+            observation_id=generate_id("obs"),
+            task_id=TASK_SETUP_GATING.task_id,
+            market_round_id="demo-btc-5m-2",
+            as_of_ts_utc=now,
+            state_payload={
+                "spread_bps": 8.5,
+                "top5_depth_imbalance": 0.02,
+                "realized_volatility_60s": 0.0080,
+                "taker_flow_60s": -0.05,
+                "notes": "Synthetic development sample: wide spread, dislocated book, noise",
+            },
+            provenance="SYNTHETIC_DEVELOPMENT_FIXTURE",
+        ),
+    ]
+
+    for obs in synthetic_obs:
+        storage.save_observation(obs)
+
+    # 3. Test baselines
+    rand_prov = RandomBaselineProvider(seed=42)
+    maj_prov = MajorityBaseRateProvider(dominant_choice="GOOD_SETUP")
+    abs_prov = AlwaysAbstainProvider()
+
+    for prov in [rand_prov, maj_prov, abs_prov]:
+        for obs in synthetic_obs:
+            resp = prov.evaluate(TASK_SETUP_GATING, obs)
+            storage.save_response(resp)
+            print(f"  [BASELINE] {prov.provider_name:24s} -> choice: {resp.choice:12s} (conf: {resp.confidence})")
+
+    # 4. Jev OpenRouter Remote Query (if API key available)
+    from pm_research.research.jev_openrouter import has_openrouter_api_key
+
+    has_api_key = has_openrouter_api_key()
+    jev_requests = 0
+    jev_failures = 0
+    jev_latencies: list[int] = []
+    jev_in_tok = 0
+    jev_out_tok = 0
+    jev_cost = 0.0
+    returned_model = "NONE"
+
+    if has_api_key:
+        print("\n  Executing TypeSafe Jev Remote Decision Queries (2 development samples)...")
+        jev_prov = JevDecisionProvider(timeout_seconds=25.0, max_retries=1)
+        for obs in synthetic_obs:
+            try:
+                resp = jev_prov.evaluate(TASK_SETUP_GATING, obs)
+                storage.save_response(resp)
+                jev_requests += 1
+                jev_latencies.append(resp.latency_ms)
+                jev_in_tok += resp.input_tokens
+                jev_out_tok += resp.output_tokens
+                if resp.cost:
+                    jev_cost += resp.cost
+                returned_model = resp.returned_model
+                print(
+                    f"  [JEV API] choice: {resp.choice:12s} | conf: {resp.confidence} | "
+                    f"latency: {resp.latency_ms}ms | model: {resp.returned_model}"
+                )
+            except Exception as e:
+                jev_failures += 1
+                print(f"  [JEV API WARNING] Query failed: {e}")
+    else:
+        print("\n  [NOTICE] OpenRouter API key not configured in environment. Remote smoke test skipped.")
+
+    avg_lat = round(sum(jev_latencies) / len(jev_latencies), 1) if jev_latencies else 0.0
+    print("\nSMOKE TEST SUMMARY:")
+    print(f"  REQUESTED_MODEL:        {PINNED_JEV_MODEL if has_api_key else 'N/A'}")
+    print(f"  RETURNED_MODEL:         {returned_model}")
+    print(f"  SMOKE_REQUESTS:         {jev_requests}")
+    print(f"  SMOKE_FAILURES:         {jev_failures}")
+    print(f"  AVG_LATENCY_MS:         {avg_lat} ms")
+    print(f"  TOTAL_INPUT_TOKENS:     {jev_in_tok}")
+    print(f"  TOTAL_OUTPUT_TOKENS:    {jev_out_tok}")
+    print(f"  TOTAL_COST:             ${jev_cost:.6f}")
+    print("  SMOKE_RESULTS_ARE_NOT_TRADING_EVIDENCE=YES")
+    print("=" * 80 + "\n")
+    return 0
+
+
+def cmd_jev_lab_audit(args: argparse.Namespace) -> int:
+    """Audit Jev Decision Lab evaluations, task definitions, and multiple-testing ledger."""
+    from pm_research.research.jev_lab import JevLabStorage
+    from pm_research.storage.db import Database
+
+    db_path = args.db or "data/pm_research.db"
+    db = Database(db_path)
+    storage = JevLabStorage(db)
+    summary = storage.get_audit_summary()
+
+    print("\n" + "=" * 80)
+    print("  [!] JEV DECISION RESEARCH LAB AUDIT (PHASE 9A)")
+    print(f"      Database: {db_path}")
+    print("=" * 80)
+    print(f"  REGISTERED_TASKS:          {summary['registered_tasks']}")
+    print(f"  OBSERVATIONS_RECORDED:     {summary['observations_recorded']}")
+    print(f"  RESPONSES_RECORDED:        {summary['responses_recorded']}")
+    print(f"  SCORES_RECORDED:           {summary['scores_recorded']}")
+    print(f"  STRATEGY_CANDIDATES:       {summary['strategy_candidates']}")
+    print(f"  HYPOTHESIS_ATTEMPTS:       {summary['hypothesis_attempts']}")
+    print(f"  ACTIVE_PROVIDERS:          {summary['active_providers']}")
+    print("=" * 80 + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main CLI entry point."""
     parser = argparse.ArgumentParser(
@@ -2007,6 +2190,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit pilot experiment dataset",
     )
 
+    # jev-lab-status (Phase 9A)
+    subparsers.add_parser(
+        "jev-lab-status",
+        help="Display Jev Decision Research Lab status, registered tasks, and storage summary",
+    )
+
+    # jev-lab-smoke (Phase 9A)
+    subparsers.add_parser(
+        "jev-lab-smoke",
+        help="Execute small development smoke test of Jev typed judgment and baselines",
+    )
+
+    # jev-lab-audit (Phase 9A)
+    subparsers.add_parser(
+        "jev-lab-audit",
+        help="Audit Jev Decision Lab evaluations, task definitions, and multiple-testing ledger",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -2053,6 +2254,9 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-leadlag-v2-status": cmd_btc5m_leadlag_v2_status,
         "btc5m-leadlag-v2-stop": cmd_btc5m_leadlag_v2_stop,
         "btc5m-leadlag-v2-audit": cmd_btc5m_leadlag_v2_audit,
+        "jev-lab-status": cmd_jev_lab_status,
+        "jev-lab-smoke": cmd_jev_lab_smoke,
+        "jev-lab-audit": cmd_jev_lab_audit,
     }
 
     handler = dispatch.get(args.subcommand)
