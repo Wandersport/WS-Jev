@@ -602,3 +602,269 @@ def test_offline_target_calculation_v2() -> None:
         assert p32["delta_q_2s"] is not None
         assert p32["delta_q_5s"] is None
         assert p32["delta_q_30s"] is None
+
+
+def test_binance_trade_stream_routing() -> None:
+    """Binance @trade stream (e='trade', trade_id in field 't') must be correctly routed.
+
+    Regression test: the Binance USD-M Futures API deprecated @aggTrade and replaced
+    it with @trade. The trade stream uses field 't' for trade ID instead of 'a'.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        collector = LeadLagCollectorV2(db=db, lock_file_path=str(Path(tmp_dir) / "c.lock"))
+
+        now_ms = 1727500000000
+        mono_ns = 1_000_000_000
+
+        # Real @trade stream format (e='trade', trade_id in 't')
+        wire_msg_trade = json.dumps({
+            "stream": "btcusdt@trade",
+            "data": {
+                "e": "trade",
+                "E": now_ms,
+                "T": now_ms - 3,
+                "s": "BTCUSDT",
+                "t": 8125880784,
+                "p": "82966.70",
+                "q": "0.007",
+                "X": "MARKET",
+                "m": True,
+                "st": 1,
+            }
+        })
+        collector._handle_binance_message(wire_msg_trade, now_ms, mono_ns)
+        assert collector._aggtrade_events_received == 1
+        assert len(collector._binance_trades) == 1
+
+        t_ms, p, q, is_bm, trade_id = collector._binance_trades[0]
+        assert trade_id == 8125880784
+        assert t_ms == now_ms - 3
+        assert p == 82966.70
+        assert q == 0.007
+        assert is_bm is True
+
+        # Verify raw trade event buffered with correct agg_trade_id
+        assert len(collector._raw_trade_events) == 1
+        assert collector._raw_trade_events[0]["agg_trade_id"] == 8125880784
+
+        # Legacy aggTrade format must still work
+        wire_msg_legacy = json.dumps({
+            "stream": "btcusdt@aggtrade",
+            "data": {
+                "e": "aggTrade",
+                "E": now_ms + 10,
+                "s": "BTCUSDT",
+                "a": 10001,
+                "p": "65000.50",
+                "q": "0.25",
+                "T": now_ms + 8,
+                "m": False,
+            }
+        })
+        collector._handle_binance_message(wire_msg_legacy, now_ms + 10, mono_ns + 10_000_000)
+        assert collector._aggtrade_events_received == 2
+        assert len(collector._binance_trades) == 2
+        assert collector._binance_trades[1][4] == 10001  # trade_id from 'a' field
+
+
+def test_actual_taker_flow_coverage_not_elapsed_time_proxy() -> None:
+    """Heartbeat taker_flow_60s_coverage must reflect real non-null ratio, not elapsed time.
+
+    Regression test for the defect where coverage was calculated as:
+      1.0 if (first_trade_ms and >60s elapsed) else 0.0
+    which is NOT an actual coverage ratio.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        collector = LeadLagCollectorV2(db=db, lock_file_path=str(Path(tmp_dir) / "c.lock"))
+        collector.experiment_id = EXPERIMENT_PILOT_ID
+        collector.is_pilot = True
+
+        base_ts = 1800000000_000
+        round_slug = "btc-updown-5m-1800000000"
+
+        # Create samples where taker_flow_60s is None (no trade data)
+        # This simulates what happens when aggTrade stream doesn't work
+        samples_no_flow = []
+        for i in range(10):
+            t_ms = base_ts + i * 1000
+            s = LeadLagSampleV2(
+                sample_id=f"{round_slug}_{t_ms}",
+                round_slug=round_slug,
+                experiment_id=EXPERIMENT_PILOT_ID,
+                experiment_spec_hash=EXPERIMENT_SPEC_HASH,
+                is_pilot=True,
+                sample_target_ts_ms=t_ms,
+                sample_actual_ts_ms=t_ms + 2,
+                local_monotonic_ns=i * 1_000_000_000,
+                seconds_remaining=300 - i,
+                poly_source_ts_ms=t_ms - 10,
+                poly_recv_ts_ms=t_ms,
+                poly_receipt_age_ms=2,
+                poly_source_age_ms=12,
+                poly_provenance_mode="WS_DELTA",
+                poly_best_bid=0.49,
+                poly_best_ask=0.51,
+                poly_midpoint=0.50,
+                poly_spread=0.02,
+                poly_return_1s=None,
+                poly_return_2s=None,
+                poly_return_3s=None,
+                poly_return_5s=None,
+                poly_return_10s=None,
+                poly_return_30s=None,
+                poly_is_crossed=False,
+                poly_is_valid=True,
+                binance_source_ts_ms=t_ms - 20,
+                binance_recv_ts_ms=t_ms,
+                binance_receipt_age_ms=2,
+                binance_source_age_ms=22,
+                binance_best_bid=65000.0,
+                binance_best_ask=65001.0,
+                binance_mid_price=65000.5,
+                binance_microprice=65000.5,
+                binance_microprice_offset_bps=0.0,
+                binance_spread_bps=0.15,
+                binance_basis_bps=None,
+                binance_return_since_open_bps=0.0,
+                binance_return_1s_bps=None,
+                binance_return_2s_bps=None,
+                binance_return_3s_bps=None,
+                binance_return_5s_bps=None,
+                binance_return_10s_bps=None,
+                binance_return_30s_bps=None,
+                binance_return_60s_bps=None,
+                binance_taker_flow_1s=None,
+                binance_taker_flow_2s=None,
+                binance_taker_flow_3s=None,
+                binance_taker_flow_5s=None,
+                binance_taker_flow_10s=None,
+                binance_taker_flow_30s=None,
+                binance_taker_flow_60s=None,  # All None - no trade data
+                binance_top1_depth_imbalance=0.05,
+                binance_top5_depth_imbalance=0.05,
+                binance_top20_depth_imbalance=0.05,
+                binance_is_valid=True,
+                source_to_receive_latency_ms=20,
+                inter_feed_receive_skew_ms=0,
+                is_stale=False,
+                stale_reason=None,
+                is_valid=True,
+                raw_payload_id=None,
+                raw_json="{}",
+            )
+            samples_no_flow.append(s)
+
+        db.save_leadlag_v2_samples_batch(samples_no_flow)
+
+        # Set first_trade_ms to simulate "first trade existed and >60s elapsed"
+        # Under the old bug, this would return 1.0. Under the fix, it must return 0.0
+        # because all taker_flow_60s values are None.
+        collector._first_trade_ms = base_ts - 120_000  # first trade 120s ago
+
+        coverage = collector._compute_actual_taker_flow_coverage()
+
+        # All valid samples are post-warmup (sample_actual_ts_ms > first_trade + 60s)
+        # but ALL have binance_taker_flow_60s=None, so coverage must be 0.0
+        assert coverage == 0.0, f"Expected 0.0 coverage for all-None taker flow, got {coverage}"
+
+
+def test_actual_taker_flow_coverage_with_real_data() -> None:
+    """Coverage must correctly reflect the ratio of non-null taker flow values."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        collector = LeadLagCollectorV2(db=db, lock_file_path=str(Path(tmp_dir) / "c.lock"))
+        collector.experiment_id = EXPERIMENT_PILOT_ID
+        collector.is_pilot = True
+
+        base_ts = 1800000000_000
+        round_slug = "btc-updown-5m-1800000000"
+        first_trade = base_ts - 120_000
+        collector._first_trade_ms = first_trade
+
+        samples = []
+        for i in range(20):
+            t_ms = base_ts + i * 1000
+            # 18 out of 20 samples have taker_flow_60s (90% coverage)
+            tf_60s = 0.3 if i < 18 else None
+            s = LeadLagSampleV2(
+                sample_id=f"{round_slug}_{t_ms}",
+                round_slug=round_slug,
+                experiment_id=EXPERIMENT_PILOT_ID,
+                experiment_spec_hash=EXPERIMENT_SPEC_HASH,
+                is_pilot=True,
+                sample_target_ts_ms=t_ms,
+                sample_actual_ts_ms=t_ms + 2,
+                local_monotonic_ns=i * 1_000_000_000,
+                seconds_remaining=300 - i,
+                poly_source_ts_ms=t_ms - 10,
+                poly_recv_ts_ms=t_ms,
+                poly_receipt_age_ms=2,
+                poly_source_age_ms=12,
+                poly_provenance_mode="WS_DELTA",
+                poly_best_bid=0.49,
+                poly_best_ask=0.51,
+                poly_midpoint=0.50,
+                poly_spread=0.02,
+                poly_return_1s=None,
+                poly_return_2s=None,
+                poly_return_3s=None,
+                poly_return_5s=None,
+                poly_return_10s=None,
+                poly_return_30s=None,
+                poly_is_crossed=False,
+                poly_is_valid=True,
+                binance_source_ts_ms=t_ms - 20,
+                binance_recv_ts_ms=t_ms,
+                binance_receipt_age_ms=2,
+                binance_source_age_ms=22,
+                binance_best_bid=65000.0,
+                binance_best_ask=65001.0,
+                binance_mid_price=65000.5,
+                binance_microprice=65000.5,
+                binance_microprice_offset_bps=0.0,
+                binance_spread_bps=0.15,
+                binance_basis_bps=None,
+                binance_return_since_open_bps=0.0,
+                binance_return_1s_bps=None,
+                binance_return_2s_bps=None,
+                binance_return_3s_bps=None,
+                binance_return_5s_bps=None,
+                binance_return_10s_bps=None,
+                binance_return_30s_bps=None,
+                binance_return_60s_bps=None,
+                binance_taker_flow_1s=0.2 if i < 18 else None,
+                binance_taker_flow_2s=0.2 if i < 18 else None,
+                binance_taker_flow_3s=0.2 if i < 18 else None,
+                binance_taker_flow_5s=0.2 if i < 18 else None,
+                binance_taker_flow_10s=0.2 if i < 18 else None,
+                binance_taker_flow_30s=0.2 if i < 18 else None,
+                binance_taker_flow_60s=tf_60s,
+                binance_top1_depth_imbalance=0.05,
+                binance_top5_depth_imbalance=0.05,
+                binance_top20_depth_imbalance=0.05,
+                binance_is_valid=True,
+                source_to_receive_latency_ms=20,
+                inter_feed_receive_skew_ms=0,
+                is_stale=False,
+                stale_reason=None,
+                is_valid=True,
+                raw_payload_id=None,
+                raw_json="{}",
+            )
+            samples.append(s)
+
+        db.save_leadlag_v2_samples_batch(samples)
+        collector._total_samples_count = 20
+
+        coverage = collector._compute_actual_taker_flow_coverage()
+        # 18 non-null out of 20 eligible valid post-warmup samples = 0.9
+        assert coverage == 0.9, f"Expected 0.9 coverage, got {coverage}"
+
+
+def test_binance_ws_url_uses_trade_stream() -> None:
+    """WS URL must use @trade (not deprecated @aggTrade) for Binance futures trade data."""
+    from pm_research.research.btc5m.leadlag_v2_collector import BINANCE_WS_URL
+    assert "btcusdt@trade" in BINANCE_WS_URL
+    assert "aggTrade" not in BINANCE_WS_URL, "aggTrade stream is deprecated on Binance futures"

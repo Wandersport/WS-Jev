@@ -49,7 +49,7 @@ from pm_research.storage.db import Database
 
 logger = logging.getLogger(__name__)
 
-BINANCE_WS_URL: str = "wss://fstream.binance.com/stream?streams=btcusdt@depth20@100ms/btcusdt@aggTrade"
+BINANCE_WS_URL: str = "wss://fstream.binance.com/stream?streams=btcusdt@depth20@100ms/btcusdt@trade"
 POLY_WS_URL: str = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
 
 DEFAULT_V2_LOCK_FILE: str = "data/btc5m_leadlag_v2_collector.lock"
@@ -372,9 +372,10 @@ class LeadLagCollectorV2:
                     if len(self._raw_depth_events) < 1000:
                         self._raw_depth_events.append(ev)
 
-            elif "aggtrade" in s_lower or e_type == "aggTrade":
+            elif "aggtrade" in s_lower or "trade" in s_lower or e_type in ("aggTrade", "trade"):
                 self._aggtrade_events_received += 1
-                agg_id = int(payload["a"])
+                # Support both legacy aggTrade (field 'a') and current trade (field 't') formats
+                agg_id = int(payload.get("a") or payload.get("t"))
                 t_ms = int(payload["T"])
                 p_val = float(payload["p"])
                 q_val = float(payload["q"])
@@ -1122,6 +1123,9 @@ class LeadLagCollectorV2:
         bn_tot = self._binance_source_ts_present + self._binance_source_ts_missing
         bn_cov = round(self._binance_source_ts_present / bn_tot, 4) if bn_tot > 0 else 0.0
 
+        # Actual taker-flow coverage from persisted valid samples (not elapsed-time proxy)
+        tf_60s_cov = self._compute_actual_taker_flow_coverage()
+
         # Percentile metrics
         latency_summary = {
             "binance_source_to_recv": compute_percentiles(list(self._binance_latencies_ms)),
@@ -1156,7 +1160,7 @@ class LeadLagCollectorV2:
             "poly_source_ts_missing": self._poly_source_ts_missing,
             "binance_ts_coverage": bn_cov,
             "poly_ts_coverage": poly_cov,
-            "taker_flow_60s_coverage": 1.0 if (self._first_trade_ms and (int(now * 1000) - self._first_trade_ms) > 60000) else 0.0,
+            "taker_flow_60s_coverage": tf_60s_cov,
             "malformed_events": self._malformed_binance_events + self._malformed_poly_events,
             "unhandled_events": self._unhandled_binance_stream_count + self._unhandled_poly_event_count,
             "duplicate_trades": self._duplicate_aggtrade_events,
@@ -1172,11 +1176,58 @@ class LeadLagCollectorV2:
         self.db.save_leadlag_v2_heartbeat(hb)
 
     # ==========================================================================
-    # Fail-Fast Pilot Verification (Mandate 18)
+    # Actual Taker-Flow Coverage (Mandate 12: >95% SLA, no elapsed-time proxy)
+    # ==========================================================================
+
+    def _compute_actual_taker_flow_coverage(self) -> float:
+        """Compute actual non-null taker_flow_60s coverage from collected samples.
+
+        Only counts valid samples collected after the 60s warmup period
+        (i.e., where taker_flow_60s has had sufficient lookback to be non-None
+        if trades are actually being received).
+
+        Returns a ratio in [0.0, 1.0]. Never uses elapsed-time proxy.
+        """
+        if self._total_samples_count == 0:
+            return 0.0
+
+        # Query persisted valid samples for this experiment
+        samples = self.db.get_leadlag_v2_samples(
+            experiment_id=self.experiment_id,
+        )
+        if not samples:
+            return 0.0
+
+        # Filter to valid post-warmup samples (60s after first trade)
+        first_trade = self._first_trade_ms
+        eligible = 0
+        non_null = 0
+        for s in samples:
+            if not s.get("is_valid"):
+                continue
+            # Post-warmup: sample must be at least 60s after first trade
+            if first_trade is not None and s["sample_actual_ts_ms"] >= first_trade + 60000:
+                eligible += 1
+                if s.get("binance_taker_flow_60s") is not None:
+                    non_null += 1
+
+        return round(non_null / eligible, 4) if eligible > 0 else 0.0
+
+    # ==========================================================================
+    # Fail-Fast Pilot Verification (Mandate 18 + Spec SLAs)
     # ==========================================================================
 
     def _check_pilot_fail_fast(self, elapsed_sec: float) -> None:
-        """Enforce strict fail-fast rules for live pilot data collection."""
+        """Enforce strict fail-fast rules for live pilot data collection.
+
+        Per frozen spec (Mandate 9, 12):
+        - Zero aggTrades after 30s → FAIL
+        - Zero Polymarket source timestamps after 15 delta events → FAIL
+        - Excessive parser exceptions (>30) → FAIL
+        - Binance source timestamp coverage <99% after 60s → FAIL
+        - Polymarket source timestamp coverage <95% after 60s → FAIL
+        - Taker-flow post-warmup coverage <95% after 120s (2x warmup) → FAIL
+        """
         if not self.is_pilot:
             return
 
@@ -1200,6 +1251,46 @@ class LeadLagCollectorV2:
             self._pilot_failed = True
             self._pilot_failure_reason = "EXCESSIVE_PARSER_EXCEPTIONS"
             self._stop_event.set()
+
+        # 4. Binance source timestamp coverage <99% after 60s warmup (Mandate 9)
+        if elapsed_sec > 60.0:
+            bn_tot = self._binance_source_ts_present + self._binance_source_ts_missing
+            if bn_tot >= 50:  # sufficient sample size
+                bn_cov = self._binance_source_ts_present / bn_tot
+                if bn_cov < 0.99:
+                    logger.error(
+                        "PILOT FAIL-FAST: Binance source TS coverage %.2f%% < 99%% after 60s! Aborting.",
+                        bn_cov * 100,
+                    )
+                    self._pilot_failed = True
+                    self._pilot_failure_reason = f"BINANCE_TS_COVERAGE_{bn_cov*100:.1f}PCT_BELOW_99PCT"
+                    self._stop_event.set()
+
+        # 5. Polymarket source timestamp coverage <95% after 60s warmup (Mandate 9)
+        if elapsed_sec > 60.0:
+            poly_tot = self._poly_source_ts_present + self._poly_source_ts_missing
+            if poly_tot >= 50:  # sufficient sample size
+                poly_cov = self._poly_source_ts_present / poly_tot
+                if poly_cov < 0.95:
+                    logger.error(
+                        "PILOT FAIL-FAST: Poly source TS coverage %.2f%% < 95%% after 60s! Aborting.",
+                        poly_cov * 100,
+                    )
+                    self._pilot_failed = True
+                    self._pilot_failure_reason = f"POLY_TS_COVERAGE_{poly_cov*100:.1f}PCT_BELOW_95PCT"
+                    self._stop_event.set()
+
+        # 6. Taker-flow post-warmup coverage <95% after 120s (Mandate 12)
+        if elapsed_sec > 120.0:
+            tf_cov = self._compute_actual_taker_flow_coverage()
+            if tf_cov > 0.0 and tf_cov < 0.95:
+                logger.error(
+                    "PILOT FAIL-FAST: Taker-flow 60s coverage %.2f%% < 95%% after 120s! Aborting.",
+                    tf_cov * 100,
+                )
+                self._pilot_failed = True
+                self._pilot_failure_reason = f"TAKER_FLOW_COVERAGE_{tf_cov*100:.1f}PCT_BELOW_95PCT"
+                self._stop_event.set()
 
     # ==========================================================================
     # Main Execution Loop
