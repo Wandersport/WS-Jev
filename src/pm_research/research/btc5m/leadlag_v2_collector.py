@@ -155,6 +155,8 @@ class LeadLagCollectorV2:
         self._upcoming_round_slug: str | None = None
         self._upcoming_round_info: BTC5mRoundInfo | None = None
         self._rounds_captured_count: int = 0
+        self._completed_round_slugs: set[str] = set()
+        self._logged_already_completed: bool = False
         self._total_samples_count: int = 0
         self._stale_samples_count: int = 0
         self._last_heartbeat_time: float = 0.0
@@ -203,6 +205,70 @@ class LeadLagCollectorV2:
         self._last_trade_recv_time: float = time.time()
         self._last_depth_recv_time: float = time.time()
         self._last_poly_recv_time: float = time.time()
+
+        # Check existing persisted rounds for this experiment to ensure crash-safe resume semantics
+        self._initialize_persisted_rounds()
+
+    def _initialize_persisted_rounds(self) -> None:
+        """Initialize round tracking from existing database records, failing closed on inconsistencies."""
+        existing_rounds = self.db.get_leadlag_v2_rounds(experiment_id=self.experiment_id)
+        if not existing_rounds:
+            self._rounds_captured_count = 0
+            self._completed_round_slugs = set()
+            return
+
+        # 1. Fail closed if unexpected ACTIVE or non-COMPLETED rounds exist
+        active_rounds = [r for r in existing_rounds if r.get("status") == "ACTIVE"]
+        if active_rounds:
+            slugs = [r.get("round_slug") for r in active_rounds]
+            raise RuntimeError(
+                f"Fail-closed: Found unexpected ACTIVE round(s) {slugs} for experiment {self.experiment_id} in database. "
+                "Database contains incomplete/unclosed round state from a previous run."
+            )
+        non_completed = [r for r in existing_rounds if r.get("status") != "COMPLETED"]
+        if non_completed:
+            slugs = [r.get("round_slug") for r in non_completed]
+            raise RuntimeError(
+                f"Fail-closed: Found unexpected non-COMPLETED round(s) {slugs} for experiment {self.experiment_id} in database."
+            )
+
+        # 2. Check metadata consistency across existing rounds
+        slugs = [r.get("round_slug") for r in existing_rounds]
+        if len(slugs) != len(set(slugs)):
+            raise RuntimeError(
+                f"Fail-closed: Found duplicate round slugs in database for experiment {self.experiment_id}."
+            )
+
+        for r in existing_rounds:
+            if r.get("experiment_spec_hash") != self.experiment_spec_hash:
+                raise RuntimeError(
+                    f"Fail-closed: Persisted round {r.get('round_slug')} has spec hash {r.get('experiment_spec_hash')} "
+                    f"differing from current spec hash {self.experiment_spec_hash}."
+                )
+            if bool(r.get("is_pilot")) != self.is_pilot:
+                raise RuntimeError(
+                    f"Fail-closed: Persisted round {r.get('round_slug')} is_pilot={r.get('is_pilot')} "
+                    f"does not match collector is_pilot={self.is_pilot}."
+                )
+            sc = r.get("sample_count") or 0
+            vsc = r.get("valid_sample_count") or 0
+            if sc < 0 or vsc < 0 or vsc > sc:
+                raise RuntimeError(
+                    f"Fail-closed: Inconsistent sample counts in round {r.get('round_slug')}: "
+                    f"valid_sample_count={vsc}, sample_count={sc}."
+                )
+
+        completed_rounds = [r for r in existing_rounds if r.get("status") == "COMPLETED"]
+        self._completed_round_slugs = {r["round_slug"] for r in completed_rounds if r.get("round_slug")}
+        self._rounds_captured_count = len(completed_rounds)
+
+        summary = self.db.get_leadlag_v2_audit_summary(self.experiment_id)
+        self._total_samples_count = summary.get("total_samples", 0)
+        self._stale_samples_count = summary.get("stale_samples", 0)
+        logger.info(
+            f"Initialized collector progress from database: {self._rounds_captured_count}/{self.target_physical_rounds} "
+            f"completed physical rounds ({self._total_samples_count} samples)."
+        )
 
     def acquire_lock(self) -> None:
         """Acquire non-blocking single-instance lock."""
@@ -643,7 +709,7 @@ class LeadLagCollectorV2:
         recv_ms = int(time.time() * 1000)
         mono_ns = time.monotonic_ns()
         try:
-            book = self.poly_rest_collector.fetch_order_book(token_id)
+            book = self.poly_rest_collector.fetch_book(token_id)
             if book.is_valid:
                 self._rest_fallback_events += 1
                 s_ts = book.source_event_timestamp_ms
@@ -654,8 +720,8 @@ class LeadLagCollectorV2:
 
                 raw_bytes = json.dumps({
                     "token_id": token_id,
-                    "bids": book.bids,
-                    "asks": book.asks,
+                    "bids": [{"price": b.price, "size": b.size} for b in book.bids],
+                    "asks": [{"price": a.price, "size": a.size} for a in book.asks],
                     "source_ts": s_ts,
                     "recv_ms": recv_ms,
                 }).encode("utf-8")
@@ -1020,6 +1086,19 @@ class LeadLagCollectorV2:
             self._prefetch_upcoming_round_if_needed(now_sec)
             return
 
+        # If this round was already completed in the database (e.g. from an earlier run),
+        # do NOT re-register or overwrite it as ACTIVE. Wait for next physical round.
+        if hasattr(self, "_completed_round_slugs") and expected_slug in self._completed_round_slugs:
+            if not self._logged_already_completed:
+                logger.info(
+                    f"Physical round {expected_slug} already completed in database "
+                    f"({self._rounds_captured_count}/{self.target_physical_rounds}). Waiting for next physical round..."
+                )
+                self._logged_already_completed = True
+            return
+
+        self._logged_already_completed = False
+
         # Round transition occurred
         if self._current_round_slug is not None:
             self._close_current_round()
@@ -1099,6 +1178,7 @@ class LeadLagCollectorV2:
             completed_at_utc=datetime.now(timezone.utc).isoformat(),
             experiment_id=self.experiment_id,
         )
+        self._completed_round_slugs.add(self._current_round_slug)
         logger.info(f"Closed physical round {self._current_round_slug}: {val}/{tot} valid samples.")
 
     def _flush_batch(self) -> None:
@@ -1459,6 +1539,15 @@ class LeadLagCollectorV2:
         self.acquire_lock()
         self._running = True
         self._start_time_sec = time.time()
+
+        # Check if target physical rounds already reached before starting workers
+        if self._rounds_captured_count >= self.target_physical_rounds:
+            logger.info(
+                f"Target of {self.target_physical_rounds} physical rounds already reached "
+                f"({self._rounds_captured_count} completed in database). Cleanly exiting."
+            )
+            self.release_lock()
+            return
 
         def _handle_signal(signum: int, _frame: Any) -> None:
             logger.info(f"Received signal {signum}, initiating clean v2 collector shutdown...")

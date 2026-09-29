@@ -954,3 +954,179 @@ def test_sustained_health_watchdog_tolerates_transient_and_aborts_on_sustained()
         assert collector._collection_failed is True
         assert collector._stop_event.is_set() is True
         assert "SUSTAINED_FAILURE" in (collector._collection_failure_reason or "")
+
+
+def test_poly_rest_fallback_hotfix_accepts_book_and_records_provenance() -> None:
+    """REST fallback hotfix must call fetch_book(), accept valid book, record REST_FALLBACK, and not increment parser exceptions."""
+    from pm_research.research.btc5m.poly_book import BookLevel, ValidatedOrderBook
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        collector = LeadLagCollectorV2(
+            db=db,
+            lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            is_pilot=False,
+        )
+
+        token_id = "test_outcome_token_123"
+        collector._poly_token_id = token_id
+        valid_book = ValidatedOrderBook(
+            token_id=token_id,
+            source_event_timestamp_ms=1790675100123,
+            received_at_ms=1790675100150,
+            bids=(BookLevel(price=0.48, size=250.0),),
+            asks=(BookLevel(price=0.52, size=300.0),),
+            best_bid=0.48,
+            best_ask=0.52,
+            midpoint=0.50,
+            spread=0.04,
+            is_crossed=False,
+            is_valid=True,
+            min_order_size=1.0,
+        )
+
+        # Inject into in-memory store so fetch_book returns it deterministically
+        collector.poly_rest_collector.inject_book(token_id, valid_book)
+
+        init_exceptions = collector._parser_exception_count
+        assert init_exceptions == 0
+
+        # Invoke REST fallback
+        collector._poll_poly_rest_fallback()
+
+        # Verify acceptance, provenance, and parser exception count
+        assert collector._parser_exception_count == 0
+        assert collector._rest_fallback_events == 1
+        assert collector._poly_provenance_mode == "REST_FALLBACK"
+        assert collector._poly_best_bid == 0.48
+        assert collector._poly_best_ask == 0.52
+        assert collector._poly_midpoint == 0.50
+        assert collector._poly_is_crossed is False
+        assert collector._poly_source_ts_ms == 1790675100123
+
+
+def test_resume_from_151_to_target_500() -> None:
+    """At startup initialize progress from 151 completed rounds, next captured is 152, stops at total 500."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        # Pre-populate 151 COMPLETED rounds
+        base_epoch = 1790000000
+        for i in range(151):
+            start = base_epoch + i * 300
+            slug = f"btc-updown-5m-{start}"
+            db.save_leadlag_v2_round({
+                "round_slug": slug,
+                "experiment_id": EXPERIMENT_ID,
+                "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+                "is_pilot": False,
+                "start_epoch": start,
+                "end_epoch": start + 300,
+                "up_token_id": f"token_up_{i}",
+                "down_token_id": f"token_down_{i}",
+                "condition_id": f"cond_{i}",
+                "status": "COMPLETED",
+                "sample_count": 100,
+                "valid_sample_count": 100,
+                "created_at_utc": "2026-09-29T00:00:00+00:00",
+                "completed_at_utc": "2026-09-29T00:05:00+00:00",
+            })
+
+        # Initialize collector with target 500
+        collector = LeadLagCollectorV2(
+            db=db,
+            target_physical_rounds=500,
+            is_pilot=False,
+            lock_file_path=str(Path(tmp_dir) / "c.lock"),
+        )
+        assert collector._rounds_captured_count == 151
+        assert len(collector._completed_round_slugs) == 151
+
+        # 1. Starting during an already completed round must not re-register it
+        completed_slug = f"btc-updown-5m-{base_epoch + 150 * 300}"
+        collector.contract_mgr.derive_round_slug = lambda _: completed_slug
+        collector._ensure_active_round(now_sec=float(base_epoch + 150 * 300 + 10))
+        assert collector._rounds_captured_count == 151
+        assert collector._current_round_slug is None
+
+        # 2. Next physical round must become 152
+        new_start = base_epoch + 151 * 300
+        new_slug = f"btc-updown-5m-{new_start}"
+        collector.contract_mgr.derive_round_slug = lambda _: new_slug
+        collector.contract_mgr.get_round_info = lambda _: BTC5mRoundInfo(
+            round_slug=new_slug,
+            up_token_id="tok_up_152",
+            down_token_id="tok_down_152",
+            condition_id="cond_152",
+            window_start_epoch=new_start,
+            window_end_epoch=new_start + 300,
+        )
+        collector._ensure_active_round(now_sec=float(new_start + 5))
+        assert collector._rounds_captured_count == 152
+        assert collector._current_round_slug == new_slug
+
+        # DB must have 152 rounds (151 completed + 1 active)
+        all_rounds = db.get_leadlag_v2_rounds(EXPERIMENT_ID)
+        assert len(all_rounds) == 152
+        active = [r for r in all_rounds if r["status"] == "ACTIVE"]
+        assert len(active) == 1
+        assert active[0]["round_slug"] == new_slug
+
+        # 3. Simulate completion and verify total reaches target
+        collector._close_current_round()
+        assert len(collector._completed_round_slugs) == 152
+
+
+def test_resume_fail_closed_on_unexpected_active_round() -> None:
+    """Startup must fail closed if unexpected ACTIVE rounds exist in database."""
+    import pytest
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        db.save_leadlag_v2_round({
+            "round_slug": "btc-updown-5m-1790000000",
+            "experiment_id": EXPERIMENT_ID,
+            "experiment_spec_hash": EXPERIMENT_SPEC_HASH,
+            "is_pilot": False,
+            "start_epoch": 1790000000,
+            "end_epoch": 1790000300,
+            "status": "ACTIVE",
+            "created_at_utc": "2026-09-29T00:00:00+00:00",
+        })
+
+        with pytest.raises(RuntimeError, match="Fail-closed: Found unexpected ACTIVE round"):
+            LeadLagCollectorV2(
+                db=db,
+                target_physical_rounds=500,
+                is_pilot=False,
+                lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            )
+
+
+def test_resume_fail_closed_on_inconsistent_spec_hash() -> None:
+    """Startup must fail closed if persisted round has mismatched spec hash."""
+    import pytest
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        db = Database(Path(tmp_dir) / "test.db")
+        db.save_leadlag_v2_round({
+            "round_slug": "btc-updown-5m-1790000000",
+            "experiment_id": EXPERIMENT_ID,
+            "experiment_spec_hash": "corrupt_or_outdated_spec_hash",
+            "is_pilot": False,
+            "start_epoch": 1790000000,
+            "end_epoch": 1790000300,
+            "status": "COMPLETED",
+            "sample_count": 10,
+            "valid_sample_count": 10,
+            "created_at_utc": "2026-09-29T00:00:00+00:00",
+            "completed_at_utc": "2026-09-29T00:05:00+00:00",
+        })
+
+        with pytest.raises(RuntimeError, match="Fail-closed: Persisted round .* spec hash"):
+            LeadLagCollectorV2(
+                db=db,
+                target_physical_rounds=500,
+                is_pilot=False,
+                lock_file_path=str(Path(tmp_dir) / "c.lock"),
+            )
+
