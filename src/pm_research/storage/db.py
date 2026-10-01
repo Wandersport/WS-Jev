@@ -3009,6 +3009,7 @@ class Database:
         valid_sample_count: int,
         completed_at_utc: str,
         experiment_id: str | None = None,
+        conn: sqlite3.Connection | None = None,
     ) -> None:
         """Mark physical round completed in leadlag v2."""
         sql = """
@@ -3023,8 +3024,11 @@ class Database:
         if experiment_id is not None:
             sql += " AND experiment_id = ?"
             params.append(experiment_id)
-        with self._get_connection() as conn:
+        if conn is not None:
             conn.execute(sql, tuple(params))
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, tuple(params))
 
     def get_leadlag_v2_rounds(self, experiment_id: str = "btc5m_leadlag_v2") -> list[dict[str, Any]]:
         """Retrieve all recorded physical rounds for leadlag v2 experiment."""
@@ -3342,7 +3346,7 @@ class Database:
             d["raw_bytes"] = decompressed
             return d
 
-    def save_leadlag_v2_heartbeat(self, heartbeat: dict[str, Any]) -> None:
+    def save_leadlag_v2_heartbeat(self, heartbeat: dict[str, Any], conn: sqlite3.Connection | None = None) -> None:
         """Persist a collector v2 heartbeat snapshot."""
         sql = """
             INSERT INTO leadlag_v2_collector_heartbeat (
@@ -3402,8 +3406,11 @@ class Database:
             heartbeat.get("latency_metrics_json", "{}"),
             heartbeat.get("extra_json", "{}"),
         )
-        with self._get_connection() as conn:
+        if conn is not None:
             conn.execute(sql, params)
+        else:
+            with self._get_connection() as c:
+                c.execute(sql, params)
 
     def get_leadlag_v2_latest_heartbeat(self, experiment_id: str = "btc5m_leadlag_v2") -> dict[str, Any] | None:
         """Retrieve the most recent heartbeat for leadlag v2 collector."""
