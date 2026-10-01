@@ -1,0 +1,108 @@
+{
+  "experiment_id": "btc5m_leadlag_v2",
+  "experiment_spec_hash": "dc8663876e8a1ca5f22d73f1e5f8bdd69fcf1a4946aba741708947c7e63c3352",
+  "analysis_phase": "Phase 8D",
+  "primary_research_question": "Does public Binance BTC perpetual information observed at time t contain incremental information about future native Polymarket midpoint movement at t+L, conditional on Polymarket's own state at t?",
+  "predeclared_lags_sec": [
+    1,
+    2,
+    3,
+    5,
+    10,
+    15,
+    30
+  ],
+  "targets": {
+    "delta_q": "q_{t+L} - q_t (native Polymarket UP token midpoint change)",
+    "delta_logit_q": "logit(q_{t+L}) - logit(q_t) with clamping epsilon = 1e-6"
+  },
+  "pairing_rules": {
+    "method": "Exact sample_target_ts_ms grid matching",
+    "nearest_neighbor_forbidden": true,
+    "timing_gate_primary": "abs(actual_elapsed_ms - lag_ms) <= 500 ms",
+    "timing_gate_sensitivities": [
+      "abs(actual_elapsed_ms - lag_ms) <= 100 ms",
+      "abs(actual_elapsed_ms - lag_ms) <= 250 ms"
+    ],
+    "validity_requirement": "is_valid == 1 and non-null poly_midpoint at both t and t+L"
+  },
+  "feature_sets": {
+    "b0_polymarket_controls": [
+      "poly_midpoint",
+      "poly_spread",
+      "seconds_remaining",
+      "poly_return_1s",
+      "poly_return_2s",
+      "poly_return_3s",
+      "poly_return_5s",
+      "poly_return_10s",
+      "poly_return_30s"
+    ],
+    "b0_feature_count": 9,
+    "binance_incremental": [
+      "binance_mid_price",
+      "binance_microprice_offset_bps",
+      "binance_spread_bps",
+      "binance_return_since_open_bps",
+      "binance_return_1s_bps",
+      "binance_return_2s_bps",
+      "binance_return_3s_bps",
+      "binance_return_5s_bps",
+      "binance_return_10s_bps",
+      "binance_return_30s_bps",
+      "binance_return_60s_bps",
+      "binance_top1_depth_imbalance",
+      "binance_top5_depth_imbalance",
+      "binance_top20_depth_imbalance"
+    ],
+    "binance_feature_count": 14,
+    "b1_augmented": [
+      "poly_midpoint",
+      "poly_spread",
+      "seconds_remaining",
+      "poly_return_1s",
+      "poly_return_2s",
+      "poly_return_3s",
+      "poly_return_5s",
+      "poly_return_10s",
+      "poly_return_30s",
+      "binance_mid_price",
+      "binance_microprice_offset_bps",
+      "binance_spread_bps",
+      "binance_return_since_open_bps",
+      "binance_return_1s_bps",
+      "binance_return_2s_bps",
+      "binance_return_3s_bps",
+      "binance_return_5s_bps",
+      "binance_return_10s_bps",
+      "binance_return_30s_bps",
+      "binance_return_60s_bps",
+      "binance_top1_depth_imbalance",
+      "binance_top5_depth_imbalance",
+      "binance_top20_depth_imbalance"
+    ],
+    "b1_feature_count": 23
+  },
+  "model_and_inference_discipline": {
+    "model_type": "Ridge Regression with L2 penalty lambda = 1.0",
+    "solver": "Deterministic Gaussian elimination with partial pivoting (standard library)",
+    "standardization": "StandardScaler fit strictly on training fold",
+    "cross_validation": "5-fold GroupKFold clustered strictly by physical round (round_slug)",
+    "resampling_cluster_unit": "Physical Round (round_slug)",
+    "bootstrap_replicates": 2000,
+    "bootstrap_seed": 42,
+    "multiple_testing_correction": "Holm-Bonferroni step-down correction across 7 horizons"
+  },
+  "cadence_robustness_evaluations": [
+    "Pair-weighted analysis",
+    "Equal-round weighting",
+    "Sessions 1\u20133 (rounds 1\u2013181) vs Sessions 4\u20136 (rounds 182\u2013500)",
+    "Early (1\u2013167), Mid (168\u2013334), Late (335\u2013500) round blocks",
+    "Timing gates: <=100ms, <=250ms, <=500ms"
+  ],
+  "negative_and_placebo_checks": [
+    "Contemporaneous Binance vs Realized Past Polymarket Movement (t - L)",
+    "Future Information Leakage and Monotonicity Integrity Check",
+    "Within-round / Shuffled-Round Placebo Null Distribution"
+  ]
+}

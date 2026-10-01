@@ -1,0 +1,67 @@
+{
+  "experiment_id": "btc5m_leadlag_v2",
+  "experiment_spec_hash": "dc8663876e8a1ca5f22d73f1e5f8bdd69fcf1a4946aba741708947c7e63c3352",
+  "timestamp_audit": {
+    "future_timestamp_leaks_detected": 0,
+    "monotonic_errors": 0,
+    "max_inter_feed_skew_ms": 2936,
+    "leakage_integrity_verdict": "PASS"
+  },
+  "shuffled_round_placebo_null_check": {
+    "description": "Round IDs permuted between Binance features and Polymarket targets",
+    "expected_delta_r2": "<= 0.0005 (empirical null)",
+    "results_by_lag": {
+      "1": {
+        "n_pairs": 20163,
+        "shuffled_placebo_delta_r2": -0.0008
+      },
+      "2": {
+        "n_pairs": 30979,
+        "shuffled_placebo_delta_r2": -0.00046
+      },
+      "3": {
+        "n_pairs": 26648,
+        "shuffled_placebo_delta_r2": -0.00159
+      },
+      "5": {
+        "n_pairs": 33765,
+        "shuffled_placebo_delta_r2": -0.00084
+      },
+      "10": {
+        "n_pairs": 30008,
+        "shuffled_placebo_delta_r2": -0.00246
+      },
+      "15": {
+        "n_pairs": 24469,
+        "shuffled_placebo_delta_r2": -0.00203
+      },
+      "30": {
+        "n_pairs": 26756,
+        "shuffled_placebo_delta_r2": -0.00489
+      }
+    },
+    "placebo_verdict": "PASS"
+  },
+  "past_polymarket_movement_placebo": {
+    "description": "Contemporaneous Binance features predicting realized past Polymarket return (t - L)",
+    "results_by_lag": {
+      "1": {
+        "n_pairs": 20163,
+        "delta_r2_past_movement": 0.00179
+      },
+      "2": {
+        "n_pairs": 30979,
+        "delta_r2_past_movement": 0.08575
+      },
+      "3": {
+        "n_pairs": 26648,
+        "delta_r2_past_movement": 0.15366
+      },
+      "5": {
+        "n_pairs": 33765,
+        "delta_r2_past_movement": 0.22886
+      }
+    }
+  },
+  "overall_integrity_verdict": "PASS"
+}
