@@ -1607,6 +1607,120 @@ def cmd_btc5m_leadlag_v2_audit(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_btc5m_leadlag_v3_run(args: argparse.Namespace) -> int:
+    """Internal runner for Phase 8E lead-lag v3 replication collector."""
+    from pm_research.research.btc5m.leadlag_v3_collector import LeadLagCollectorV3
+    from pm_research.research.btc5m.leadlag_v3_experiment import REPLICATION_DB_PATH
+
+    db_path = args.db or str(REPLICATION_DB_PATH)
+    db = get_db(db_path)
+    is_pilot = getattr(args, "pilot", False)
+    collector = LeadLagCollectorV3(
+        db=db,
+        target_physical_rounds=args.target_physical_rounds,
+        is_pilot=is_pilot,
+    )
+    collector.run()
+    return 0
+
+
+def cmd_btc5m_leadlag_v3_start(args: argparse.Namespace) -> int:
+    """Launch autonomous Phase 8E lead-lag v3 replication collector."""
+    from pm_research.research.btc5m.leadlag_v3_process import start_leadlag_v3_collector
+
+    is_pilot = getattr(args, "pilot", False)
+    target_rounds = args.target_physical_rounds
+    mode_str = "PILOT VALIDATION (10 PHYSICAL ROUNDS)" if is_pilot else f"PRODUCTION ({target_rounds} PHYSICAL ROUNDS)"
+
+    print("\n" + "=" * 80)
+    print("  [!] LAUNCHING BTC 5-MINUTE HIGH-FREQUENCY LEAD-LAG V3 REPLICATION COLLECTOR")
+    print(f"      Mode:                  {mode_str}")
+    print("      Observational Research Only - Zero Live/Paper Trading Execution")
+    print(f"      Target Physical Rounds:{target_rounds}")
+    print("=" * 80)
+
+    if getattr(args, "foreground", False):
+        print("  Running synchronously in foreground mode (Ctrl+C to stop)...")
+        from pm_research.research.btc5m.leadlag_v3_collector import LeadLagCollectorV3
+        from pm_research.research.btc5m.leadlag_v3_experiment import REPLICATION_DB_PATH
+
+        db = get_db(args.db or str(REPLICATION_DB_PATH))
+        collector = LeadLagCollectorV3(
+            db=db,
+            target_physical_rounds=target_rounds,
+            is_pilot=is_pilot,
+        )
+        collector.run()
+        return 0
+
+    success, msg, pid = start_leadlag_v3_collector(
+        target_physical_rounds=target_rounds,
+        is_pilot=is_pilot,
+        db_path=args.db,
+    )
+    pilot_flag = " --pilot" if is_pilot else ""
+    if success:
+        print(f"  [+] {msg}")
+        print(f"  PID:                       {pid}")
+        print(f"  Status Command:            uv run pmr btc5m-leadlag-v3-status{pilot_flag}")
+        print(f"  Stop Command:              uv run pmr btc5m-leadlag-v3-stop{pilot_flag}")
+        print(f"  Caffeinate Command:        nohup caffeinate -i -w {pid} >/dev/null 2>&1 &")
+        print("=" * 80 + "\n")
+        return 0
+    else:
+        print(f"  [-] Failed to launch collector: {msg}")
+        print("=" * 80 + "\n")
+        return 1
+
+
+def cmd_btc5m_leadlag_v3_status(args: argparse.Namespace) -> int:
+    """Check health and progress of background lead-lag v3 replication collector."""
+    from pm_research.research.btc5m.leadlag_v3_process import get_leadlag_v3_collector_status
+
+    is_pilot = getattr(args, "pilot", False)
+    st = get_leadlag_v3_collector_status(db_path=args.db, is_pilot=is_pilot)
+    mode_str = "PILOT (10 ROUNDS)" if is_pilot else "PRODUCTION (250 ROUNDS)"
+
+    print("\n" + "=" * 80)
+    print(f"  [*] BTC 5-MINUTE LEAD-LAG V3 REPLICATION COLLECTOR STATUS ({mode_str})")
+    print("=" * 80)
+    print(f"  PID:                       {st['pid']}")
+    print(f"  Process Alive:             {'YES' if st['pid_alive'] else 'NO'}")
+    print(f"  Lock Held:                 {'YES' if st['lock_held'] else 'NO'}")
+    print(f"  Overall Healthy:           {'YES' if st['is_healthy'] else 'NO'}")
+    print(f"  Heartbeat Fresh:           {'YES' if st['heartbeat_fresh'] else 'NO'} ({st['heartbeat_age_sec']}s ago)")
+
+    hb = st.get("latest_heartbeat")
+    if hb:
+        print("\n  LATEST HEARTBEAT:")
+        print(f"    Timestamp UTC:           {hb.get('timestamp_utc')}")
+        print(f"    Rounds Captured:         {hb.get('physical_rounds_captured')}")
+        print(f"    Total Samples:           {hb.get('total_samples')}")
+        print(f"    Valid Samples:           {hb.get('valid_samples')}")
+        print(f"    Binance TS Coverage:     {hb.get('binance_ts_coverage', 0)*100:.1f}%")
+        print(f"    Poly TS Coverage:        {hb.get('poly_ts_coverage', 0)*100:.1f}%")
+        print(f"    Taker Flow 60s Coverage: {hb.get('taker_flow_60s_coverage', 0)*100:.1f}%")
+
+    print("=" * 80 + "\n")
+    return 0 if st["is_healthy"] else 1
+
+
+def cmd_btc5m_leadlag_v3_stop(args: argparse.Namespace) -> int:
+    """Stop the background lead-lag v3 replication collector gracefully."""
+    from pm_research.research.btc5m.leadlag_v3_process import stop_leadlag_v3_collector
+
+    is_pilot = getattr(args, "pilot", False)
+    mode_str = "pilot" if is_pilot else "production"
+    print(f"\nInitiating graceful shutdown for lead-lag v3 {mode_str} collector...")
+    success, msg = stop_leadlag_v3_collector(is_pilot=is_pilot)
+    if success:
+        print(f"  [+] {msg}\n")
+        return 0
+    else:
+        print(f"  [-] {msg}\n")
+        return 1
+
+
 def cmd_btc5m_leadlag_analyze(args: argparse.Namespace) -> int:
     """Execute complete forensic audit and predeclared lead-lag analysis (Phase 8C.1)."""
     from pm_research.research.btc5m.leadlag_analysis import generate_forensic_report_artifacts
@@ -2007,6 +2121,67 @@ def main(argv: list[str] | None = None) -> int:
         help="Audit pilot experiment dataset",
     )
 
+    # btc5m-leadlag-v3-run
+    p_ll_v3_run = subparsers.add_parser(
+        "btc5m-leadlag-v3-run",
+        help="Run Phase 8E lead-lag v3 replication collector (internal worker)",
+    )
+    p_ll_v3_run.add_argument(
+        "--target-physical-rounds",
+        type=int,
+        default=250,
+        help="Target number of physical 5-minute rounds to collect (default: 250)",
+    )
+    p_ll_v3_run.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Run pilot validation mode (10 physical rounds)",
+    )
+
+    # btc5m-leadlag-v3-start
+    p_ll_v3_start = subparsers.add_parser(
+        "btc5m-leadlag-v3-start",
+        help="Launch background Phase 8E lead-lag v3 replication collector",
+    )
+    p_ll_v3_start.add_argument(
+        "--target-physical-rounds",
+        type=int,
+        default=250,
+        help="Target number of physical 5-minute rounds to collect (default: 250)",
+    )
+    p_ll_v3_start.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Run pilot validation mode (10 physical rounds)",
+    )
+    p_ll_v3_start.add_argument(
+        "--foreground",
+        action="store_true",
+        help="Run in foreground instead of detached daemon",
+    )
+
+    # btc5m-leadlag-v3-status
+    p_ll_v3_status = subparsers.add_parser(
+        "btc5m-leadlag-v3-status",
+        help="Check health and telemetry of lead-lag v3 collector",
+    )
+    p_ll_v3_status.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Check status of pilot collector",
+    )
+
+    # btc5m-leadlag-v3-stop
+    p_ll_v3_stop = subparsers.add_parser(
+        "btc5m-leadlag-v3-stop",
+        help="Gracefully terminate background lead-lag v3 collector",
+    )
+    p_ll_v3_stop.add_argument(
+        "--pilot",
+        action="store_true",
+        help="Stop pilot collector process",
+    )
+
     args = parser.parse_args(argv)
 
     if not args.subcommand:
@@ -2053,6 +2228,10 @@ def main(argv: list[str] | None = None) -> int:
         "btc5m-leadlag-v2-status": cmd_btc5m_leadlag_v2_status,
         "btc5m-leadlag-v2-stop": cmd_btc5m_leadlag_v2_stop,
         "btc5m-leadlag-v2-audit": cmd_btc5m_leadlag_v2_audit,
+        "btc5m-leadlag-v3-run": cmd_btc5m_leadlag_v3_run,
+        "btc5m-leadlag-v3-start": cmd_btc5m_leadlag_v3_start,
+        "btc5m-leadlag-v3-status": cmd_btc5m_leadlag_v3_status,
+        "btc5m-leadlag-v3-stop": cmd_btc5m_leadlag_v3_stop,
     }
 
     handler = dispatch.get(args.subcommand)
