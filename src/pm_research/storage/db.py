@@ -3008,19 +3008,20 @@ class Database:
         sample_count: int,
         valid_sample_count: int,
         completed_at_utc: str,
+        status: str = "COMPLETED",
         experiment_id: str | None = None,
         conn: sqlite3.Connection | None = None,
     ) -> None:
         """Mark physical round completed in leadlag v2."""
         sql = """
             UPDATE leadlag_v2_rounds
-            SET status = 'COMPLETED',
+            SET status = ?,
                 sample_count = ?,
                 valid_sample_count = ?,
                 completed_at_utc = ?
             WHERE round_slug = ?
         """
-        params = [sample_count, valid_sample_count, completed_at_utc, round_slug]
+        params = [status, sample_count, valid_sample_count, completed_at_utc, round_slug]
         if experiment_id is not None:
             sql += " AND experiment_id = ?"
             params.append(experiment_id)

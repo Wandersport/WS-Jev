@@ -58,20 +58,26 @@ def run_pilot_measurement_audit(
         (experiment_id,),
     ).fetchall()
 
-    completed_rounds = [r for r in rounds_rows if r["status"] == "COMPLETED"]
     warmup_rounds = [r for r in rounds_rows if r["status"] == "WARMUP_PARTIAL"]
+    truncated_rounds = [r for r in rounds_rows if r["status"] == "COMPLETED" and (r["sample_count"] or 0) < 285]
+    full_rounds = [
+        r for r in rounds_rows
+        if r["status"] == "COMPLETED"
+        and (r["sample_count"] or 0) >= 285
+        and (r["end_epoch"] - r["start_epoch"]) >= 300
+    ]
     active_rounds = [r for r in rounds_rows if r["status"] == "ACTIVE"]
     slugs = [r["round_slug"] for r in rounds_rows]
     has_duplicates = len(slugs) != len(set(slugs))
-    warmup_slugs = {r["round_slug"] for r in warmup_rounds}
+    full_slugs = {r["round_slug"] for r in full_rounds}
 
-    # 3. Synchronized Samples Audit (Exclude WARMUP_PARTIAL rounds from cadence stats)
+    # 3. Synchronized Samples Audit (Include ONLY the full pilot measurement rounds)
     samples_rows = cur.execute(
         "SELECT * FROM leadlag_v2_samples WHERE experiment_id = ? ORDER BY sample_target_ts_ms ASC",
         (experiment_id,),
     ).fetchall()
 
-    meas_samples = [s for s in samples_rows if s["round_slug"] not in warmup_slugs]
+    meas_samples = [s for s in samples_rows if s["round_slug"] in full_slugs]
     total_samples = len(meas_samples)
     stale_samples = sum(1 for s in meas_samples if s["is_stale"] == 1)
     stale_rate = stale_samples / total_samples if total_samples > 0 else 0.0
@@ -165,10 +171,10 @@ def run_pilot_measurement_audit(
     writer_max_q = max(writer_q_depths) if writer_q_depths else 0
     writer_final_q = writer_q_depths[-1] if writer_q_depths else 0
 
-    intended_ticks = total_samples
+    intended_ticks = len(full_rounds) * 300
     captured_ticks = total_samples
-    missed_ticks = 0
-    capture_ratio = captured_ticks / intended_ticks if intended_ticks > 0 else 1.0
+    missed_ticks = max(0, intended_ticks - captured_ticks)
+    capture_ratio = captured_ticks / intended_ticks if intended_ticks > 0 else 0.0
 
     # 6. Raw Payload Lossless Provenance Roundtrip
     sample_payload = cur.execute(
@@ -196,7 +202,7 @@ def run_pilot_measurement_audit(
 
     # Pass / Fail criteria evaluation
     pass_gates = {
-        "full_pilot_rounds": len(completed_rounds) == PILOT_PHYSICAL_ROUNDS,
+        "full_pilot_rounds": len(full_rounds) == PILOT_PHYSICAL_ROUNDS,
         "active_rounds_zero": len(active_rounds) == 0,
         "no_duplicate_slugs": not has_duplicates,
         "db_quick_check_ok": db_ok,
@@ -217,12 +223,14 @@ def run_pilot_measurement_audit(
 
     return {
         "status": "PASS" if all_pass else "FAIL",
-        "full_pilot_rounds": len(completed_rounds),
+        "full_pilot_rounds": len(full_rounds),
         "warmup_partial_rounds": len(warmup_rounds),
-        "capture_ratio": capture_ratio,
+        "truncated_rounds": len(truncated_rounds),
+        "total_rounds_recorded": len(rounds_rows),
         "intended_ticks": intended_ticks,
         "captured_ticks": captured_ticks,
         "missed_ticks": missed_ticks,
+        "capture_ratio": capture_ratio,
         "median_interarrival_ms": median_inter,
         "p95_interarrival_ms": p95_inter,
         "p99_interarrival_ms": p99_inter,
@@ -240,7 +248,8 @@ def run_pilot_measurement_audit(
         "malformed_events": malformed_events,
         "raw_roundtrip": "PASS" if raw_roundtrip_ok else "FAIL",
         "cadence_degraded": cadence_degraded,
-        "pilot_data_excluded": True,
+        "round_to_round_degradation": "YES" if cadence_degraded else "NO",
+        "pilot_data_excluded_from_replication": True,
         "ready_for_final_replication": all_pass,
         "pass_gates": pass_gates,
         "round_cadence_stats": round_cadence_stats,

@@ -65,15 +65,20 @@ class LeadLagCollectorV3:
     def __init__(
         self,
         db: Database | None = None,
-        target_physical_rounds: int = TARGET_PHYSICAL_ROUNDS,
+        target_physical_rounds: int | None = None,
         is_pilot: bool = False,
+        wait_for_boundary: bool = False,
         lock_file_path: str | None = None,
         min_disk_free_bytes: int = DEFAULT_MIN_DISK_FREE_BYTES,
         max_queue_depth: int = DEFAULT_MAX_WRITER_QUEUE_SIZE,
     ) -> None:
         self.db = db or Database(REPLICATION_DB_PATH)
-        self.target_physical_rounds = PILOT_PHYSICAL_ROUNDS if is_pilot else target_physical_rounds
         self.is_pilot = is_pilot
+        if target_physical_rounds is not None:
+            self.target_physical_rounds = target_physical_rounds
+        else:
+            self.target_physical_rounds = PILOT_PHYSICAL_ROUNDS if is_pilot else TARGET_PHYSICAL_ROUNDS
+        self.wait_for_boundary = wait_for_boundary
         self.experiment_id = EXPERIMENT_PILOT_ID if is_pilot else EXPERIMENT_ID
         self.experiment_spec_hash = EXPERIMENT_SPEC_HASH
         self.max_queue_depth = max_queue_depth
@@ -100,7 +105,9 @@ class LeadLagCollectorV3:
         self._upcoming_round_slug: str | None = None
         self._upcoming_round_info: BTC5mRoundInfo | None = None
         self._rounds_captured_count: int = 0
-        self._rounds_completed_count: int = 0
+        self._rounds_completed_count: int = self._count_completed_full_rounds_in_db()
+        self._first_round_of_run: bool = True
+        self._is_current_round_warmup_partial: bool = False
         self._current_round_sample_count: int = 0
         self._current_round_valid_count: int = 0
 
@@ -173,6 +180,30 @@ class LeadLagCollectorV3:
         self._min_disk_free_bytes = min_disk_free_bytes
         self._disk_free_bytes: int | None = None
 
+    def _count_completed_full_rounds_in_db(self) -> int:
+        """Count already-completed full rounds matching qualification criteria in DB."""
+        try:
+            with self.db._get_connection() as conn:
+                row = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM leadlag_v2_rounds
+                    WHERE experiment_id = ?
+                      AND status = 'COMPLETED'
+                      AND sample_count >= 285
+                      AND (end_epoch - start_epoch) >= 300
+                    """,
+                    (self.experiment_id,),
+                ).fetchone()
+            count = int(row[0]) if row and row[0] is not None else 0
+            logger.info(
+                f"DB resume check: {count} completed full rounds (status=COMPLETED, samples>=285) "
+                f"found for {self.experiment_id}."
+            )
+            return count
+        except Exception as e:
+            logger.warning(f"Could not query completed rounds from DB: {e}")
+            return 0
+
     # ==========================================================================
     # Asynchronous Persistence Worker
     # ==========================================================================
@@ -231,6 +262,7 @@ class LeadLagCollectorV3:
                                 sample_count=data["total_samples"],
                                 valid_sample_count=data["valid_samples"],
                                 completed_at_utc=data.get("completed_at_utc", datetime.now(timezone.utc).isoformat()),
+                                status=data.get("status", "COMPLETED"),
                                 experiment_id=data["experiment_id"],
                                 conn=writer_conn,
                             )
@@ -997,22 +1029,41 @@ class LeadLagCollectorV3:
                     self._upcoming_round_info = round_info
                     logger.info(f"Upcoming round prefetch succeeded: {next_slug}")
 
-    def _ensure_active_round(self, now_sec: float) -> None:
-        """Ensure current active physical round is registered without DB blocking."""
+    def _ensure_active_round(self, now_sec: float) -> bool:
+        """Ensure current active physical round is registered without DB blocking.
+
+        Returns True if a round is actively registered, False if target full rounds reached.
+        """
         expected_slug = self.contract_mgr.derive_round_slug(now_sec)
         if expected_slug == self._current_round_slug:
             self._prefetch_upcoming_round_if_needed(now_sec)
-            return
+            return True
 
         if self._current_round_slug is not None:
             self._close_current_round()
 
         if self._rounds_completed_count >= self.target_physical_rounds:
-            return
+            return False
 
         self._current_round_slug = expected_slug
         start_epoch = (int(now_sec) // 300) * 300
         end_epoch = start_epoch + 300
+
+        # Check if startup is mid-round:
+        # If started >2.0s into the 5-minute round and this is the first round of the run, mark WARMUP_PARTIAL
+        sec_into_round = now_sec - start_epoch
+        if self._first_round_of_run and sec_into_round > 2.0:
+            self._is_current_round_warmup_partial = True
+            round_status = "WARMUP_PARTIAL"
+            logger.warning(
+                f"Collector started mid-round ({sec_into_round:.1f}s after boundary). "
+                f"Marking round {expected_slug} as WARMUP_PARTIAL (will NOT count toward target)."
+            )
+        else:
+            self._is_current_round_warmup_partial = False
+            round_status = "ACTIVE"
+
+        self._first_round_of_run = False
 
         with self._bn_lock:
             self._bn_open_mid = None
@@ -1051,34 +1102,50 @@ class LeadLagCollectorV3:
             "up_token_id": up_token,
             "down_token_id": down_token,
             "condition_id": cond_id,
-            "status": "ACTIVE",
+            "status": round_status,
             "created_at_utc": datetime.now(timezone.utc).isoformat(),
         })
 
         self._rounds_captured_count += 1
         logger.info(
-            f"Physical round {self._rounds_captured_count}/{self.target_physical_rounds} "
-            f"registered: {expected_slug} (token={up_token})"
+            f"Physical round registered: {expected_slug} (status={round_status}, token={up_token}) "
+            f"[{self._rounds_completed_count}/{self.target_physical_rounds} full rounds completed]"
         )
+        return True
 
     def _close_current_round(self) -> None:
         """Close physical round asynchronously using in-memory counts (zero full-table queries!)."""
         if self._current_round_slug is None:
             return
 
+        is_partial = self._is_current_round_warmup_partial
+        final_status = "WARMUP_PARTIAL" if is_partial else "COMPLETED"
+
         self._enqueue_write("round_complete", {
             "round_slug": self._current_round_slug,
             "experiment_id": self.experiment_id,
             "total_samples": self._current_round_sample_count,
             "valid_samples": self._current_round_valid_count,
+            "status": final_status,
             "completed_at_utc": datetime.now(timezone.utc).isoformat(),
         })
-        logger.info(
-            f"Enqueued completion for physical round {self._current_round_slug}: "
-            f"{self._current_round_valid_count}/{self._current_round_sample_count} valid samples."
-        )
-        self._rounds_completed_count += 1
+
+        if is_partial:
+            logger.info(
+                f"Enqueued completion for WARMUP_PARTIAL round {self._current_round_slug}: "
+                f"{self._current_round_valid_count}/{self._current_round_sample_count} valid samples. "
+                "Does NOT increment completed full rounds count."
+            )
+        else:
+            self._rounds_completed_count += 1
+            logger.info(
+                f"Enqueued completion for full round {self._current_round_slug}: "
+                f"{self._current_round_valid_count}/{self._current_round_sample_count} valid samples. "
+                f"Completed full rounds: {self._rounds_completed_count}/{self.target_physical_rounds}."
+            )
+
         self._current_round_slug = None
+        self._is_current_round_warmup_partial = False
         self._current_round_sample_count = 0
         self._current_round_valid_count = 0
 
@@ -1141,7 +1208,45 @@ class LeadLagCollectorV3:
         self._start_binance_worker()
         self._start_polymarket_worker()
 
+        if self._rounds_completed_count >= self.target_physical_rounds:
+            logger.info(
+                f"Target of {self.target_physical_rounds} full rounds already satisfied in DB "
+                f"({self._rounds_completed_count} existing). Nothing to collect."
+            )
+            self._release_lock()
+            return
+
+        if self.wait_for_boundary:
+            now = time.time()
+            start_epoch = (int(now) // 300) * 300
+            sec_into_round = now - start_epoch
+            if sec_into_round > 1.0:
+                next_boundary = start_epoch + 300
+                logger.info(
+                    f"wait_for_boundary=True: feeds warming up. "
+                    f"Waiting {next_boundary - now:.2f}s until boundary {next_boundary}..."
+                )
+                upcoming_slug = self.contract_mgr.derive_round_slug(next_boundary + 10)
+                round_info = self._fetch_round_info_with_backoff(upcoming_slug)
+                if round_info:
+                    self._upcoming_round_slug = upcoming_slug
+                    self._upcoming_round_info = round_info
+                    logger.info(f"Prefetched boundary round info: {upcoming_slug}")
+
+                while not self._stop_event.is_set() and time.time() < next_boundary:
+                    remain = next_boundary - time.time()
+                    if remain > 0.05:
+                        time.sleep(min(remain - 0.01, 0.25))
+                    else:
+                        time.sleep(0.001)
+
         try:
+            now = time.time()
+            if now - int(now) < 0.2:
+                next_sample_sec = int(now)
+            else:
+                next_sample_sec = int(now) + 1
+
             while not self._stop_event.is_set():
                 now = time.time()
                 elapsed = now - self._start_time_sec
@@ -1153,20 +1258,26 @@ class LeadLagCollectorV3:
                     logger.info(f"Target of {self.target_physical_rounds} physical rounds reached! Closing cleanly.")
                     break
 
-                sleep_sec = 1.0 - (now % 1.0)
-                if sleep_sec > 0.01:
+                sleep_sec = next_sample_sec - now
+                if sleep_sec > 0.002:
                     time.sleep(sleep_sec)
 
-                sample_sec_ms = int(time.time() // 1.0) * 1000
-                self._ensure_active_round(time.time())
+                sample_sec_ms = next_sample_sec * 1000
+                active = self._ensure_active_round(time.time())
+                if not active:
+                    logger.info(f"Target of {self.target_physical_rounds} full rounds reached! Exiting loop.")
+                    break
+
                 self._capture_sample(sample_sec_ms)
                 self._emit_heartbeat()
+                next_sample_sec += 1
 
         except Exception as e:
             logger.exception(f"Unhandled error in lead-lag v3 collector main loop: {e}")
             raise
         finally:
-            self._close_current_round()
+            if self._current_round_slug is not None:
+                self._close_current_round()
             self._emit_heartbeat()
             self._stop_event.set()
 
