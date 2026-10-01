@@ -100,6 +100,7 @@ class LeadLagCollectorV3:
         self._upcoming_round_slug: str | None = None
         self._upcoming_round_info: BTC5mRoundInfo | None = None
         self._rounds_captured_count: int = 0
+        self._rounds_completed_count: int = 0
         self._current_round_sample_count: int = 0
         self._current_round_valid_count: int = 0
 
@@ -1006,6 +1007,9 @@ class LeadLagCollectorV3:
         if self._current_round_slug is not None:
             self._close_current_round()
 
+        if self._rounds_completed_count >= self.target_physical_rounds:
+            return
+
         self._current_round_slug = expected_slug
         start_epoch = (int(now_sec) // 300) * 300
         end_epoch = start_epoch + 300
@@ -1073,6 +1077,8 @@ class LeadLagCollectorV3:
             f"Enqueued completion for physical round {self._current_round_slug}: "
             f"{self._current_round_valid_count}/{self._current_round_sample_count} valid samples."
         )
+        self._rounds_completed_count += 1
+        self._current_round_slug = None
         self._current_round_sample_count = 0
         self._current_round_valid_count = 0
 
@@ -1143,7 +1149,7 @@ class LeadLagCollectorV3:
                 self._check_pilot_fail_fast(elapsed)
                 self._check_disk_space()
 
-                if self._rounds_captured_count >= self.target_physical_rounds:
+                if self._rounds_completed_count >= self.target_physical_rounds:
                     logger.info(f"Target of {self.target_physical_rounds} physical rounds reached! Closing cleanly.")
                     break
 
