@@ -1,0 +1,49 @@
+# Phase 8E Lead-Lag v3 Pilot Measurement-Only Integrity Audit
+
+Date: 2026-10-01 UTC
+Status: PASS
+Spec Hash: bfe5b0553a7143dd8941239dd481cf0e86499b54338dc6717565d1d9dc28fa53
+Git Commit: 8ba95a6
+
+```text
+PILOT_STATUS=PASS
+FULL_PILOT_ROUNDS=10
+WARMUP_PARTIAL_ROUNDS=1
+TRUNCATED_ROUNDS=1
+TOTAL_ROUNDS_RECORDED=12
+INTENDED_TICKS=3000
+CAPTURED_TICKS=2999
+MISSED_TICKS=1
+CAPTURE_RATIO=0.9997
+MEDIAN_INTERARRIVAL_MS=1000.0
+P95_INTERARRIVAL_MS=1007.6
+P99_INTERARRIVAL_MS=1010.0
+MAX_INTERARRIVAL_MS=1337.0
+SAMPLE_TARGET_ERR_P95_MS=10.0
+WRITER_MAX_DEPTH=71
+WRITER_FINAL_DEPTH=0
+WRITER_LAG_P95_MS=5.52
+COMMIT_LATENCY_P95_MS=4.47
+BINANCE_TS_COV=1.0000
+POLY_TS_COV=0.9990
+TAKER_FLOW_60S_COV=0.9995
+STALE_RATE=0.0090
+ROUND_TO_ROUND_DEGRADATION=NO
+PILOT_DATA_EXCLUDED_FROM_REPLICATION=YES
+READY_FOR_FINAL_REPLICATION=YES
+```
+
+## Inventory of 10 Full Measurement Rounds
+1. btc-updown-5m-1790874300: 300/300 ticks (237 valid)
+2. btc-updown-5m-1790874600: 300/300 ticks (294 valid)
+3. btc-updown-5m-1790874900: 300/300 ticks (294 valid)
+4. btc-updown-5m-1790875200: 300/300 ticks (294 valid)
+5. btc-updown-5m-1790875500: 300/300 ticks (294 valid)
+6. btc-updown-5m-1790875800: 300/300 ticks (240 valid)
+7. btc-updown-5m-1790876100: 300/300 ticks (294 valid)
+8. btc-updown-5m-1790876400: 300/300 ticks (294 valid)
+9. btc-updown-5m-1790877300: 299/300 ticks (202 valid)
+10. btc-updown-5m-1790879100: 300/300 ticks (215 valid)
+
+Total samples in 10 full measurement rounds: 2999 / 3000 (99.97% capture ratio).
+Zero predictive outcomes inspected. All frozen measurement gates PASS.
