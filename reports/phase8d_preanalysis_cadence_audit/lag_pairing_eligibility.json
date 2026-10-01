@@ -1,0 +1,121 @@
+{
+  "1s": {
+    "nominal_lag_sec": 1,
+    "nominal_lag_ms": 1000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 20372,
+      "capture_rate": 0.353,
+      "timing_error_p50_ms": 12,
+      "timing_error_p90_ms": 51,
+      "timing_error_p95_ms": 83,
+      "timing_error_p99_ms": 743,
+      "within_pm_100ms_frac": 0.9637,
+      "within_pm_250ms_frac": 0.9886,
+      "within_pm_500ms_frac": 0.9897,
+      "within_pm_1s_frac": 1.0
+    }
+  },
+  "2s": {
+    "nominal_lag_sec": 2,
+    "nominal_lag_ms": 2000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 31878,
+      "capture_rate": 0.5523,
+      "timing_error_p50_ms": 17,
+      "timing_error_p90_ms": 108,
+      "timing_error_p95_ms": 245,
+      "timing_error_p99_ms": 925,
+      "within_pm_100ms_frac": 0.8939,
+      "within_pm_250ms_frac": 0.9509,
+      "within_pm_500ms_frac": 0.9718,
+      "within_pm_1s_frac": 0.9999
+    }
+  },
+  "3s": {
+    "nominal_lag_sec": 3,
+    "nominal_lag_ms": 3000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 28050,
+      "capture_rate": 0.486,
+      "timing_error_p50_ms": 17,
+      "timing_error_p90_ms": 152,
+      "timing_error_p95_ms": 499,
+      "timing_error_p99_ms": 934,
+      "within_pm_100ms_frac": 0.8682,
+      "within_pm_250ms_frac": 0.9262,
+      "within_pm_500ms_frac": 0.95,
+      "within_pm_1s_frac": 0.9996
+    }
+  },
+  "5s": {
+    "nominal_lag_sec": 5,
+    "nominal_lag_ms": 5000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 35163,
+      "capture_rate": 0.6092,
+      "timing_error_p50_ms": 19,
+      "timing_error_p90_ms": 196,
+      "timing_error_p95_ms": 433,
+      "timing_error_p99_ms": 883,
+      "within_pm_100ms_frac": 0.8403,
+      "within_pm_250ms_frac": 0.9156,
+      "within_pm_500ms_frac": 0.9602,
+      "within_pm_1s_frac": 0.9998
+    }
+  },
+  "10s": {
+    "nominal_lag_sec": 10,
+    "nominal_lag_ms": 10000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 30981,
+      "capture_rate": 0.5368,
+      "timing_error_p50_ms": 18,
+      "timing_error_p90_ms": 131,
+      "timing_error_p95_ms": 288,
+      "timing_error_p99_ms": 924,
+      "within_pm_100ms_frac": 0.8751,
+      "within_pm_250ms_frac": 0.9427,
+      "within_pm_500ms_frac": 0.9686,
+      "within_pm_1s_frac": 0.9996
+    }
+  },
+  "15s": {
+    "nominal_lag_sec": 15,
+    "nominal_lag_ms": 15000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 25675,
+      "capture_rate": 0.4449,
+      "timing_error_p50_ms": 17,
+      "timing_error_p90_ms": 123,
+      "timing_error_p95_ms": 412,
+      "timing_error_p99_ms": 947,
+      "within_pm_100ms_frac": 0.8837,
+      "within_pm_250ms_frac": 0.9354,
+      "within_pm_500ms_frac": 0.953,
+      "within_pm_1s_frac": 0.9998
+    }
+  },
+  "30s": {
+    "nominal_lag_sec": 30,
+    "nominal_lag_ms": 30000,
+    "candidate_observations": 57716,
+    "exact_grid_matching": {
+      "valid_target_pairs": 27903,
+      "capture_rate": 0.4835,
+      "timing_error_p50_ms": 18,
+      "timing_error_p90_ms": 173,
+      "timing_error_p95_ms": 381,
+      "timing_error_p99_ms": 932,
+      "within_pm_100ms_frac": 0.8533,
+      "within_pm_250ms_frac": 0.9233,
+      "within_pm_500ms_frac": 0.9589,
+      "within_pm_1s_frac": 0.9998
+    }
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "sessions": [
+    {
+      "session_id": 1,
+      "label": "Session 1 (Rounds 1-151)",
+      "collector_pid": 12469,
+      "round_start": 1,
+      "round_end": 151,
+      "round_count": 151,
+      "total_samples": 31213,
+      "median_samples_per_round": 241,
+      "mean_samples_per_round": 206.7,
+      "median_interarrival_sec": 1.02,
+      "effective_cadence_samples_per_min": 48.4
+    },
+    {
+      "session_id": 2,
+      "label": "Session 2 (Rounds 152-167)",
+      "collector_pid": 12374,
+      "round_start": 152,
+      "round_end": 167,
+      "round_count": 16,
+      "total_samples": 1915,
+      "median_samples_per_round": 122.0,
+      "mean_samples_per_round": 119.7,
+      "median_interarrival_sec": 2.09,
+      "effective_cadence_samples_per_min": 24.6
+    },
+    {
+      "session_id": 3,
+      "label": "Session 3 (Rounds 168-181)",
+      "collector_pid": 16311,
+      "round_start": 168,
+      "round_end": 181,
+      "round_count": 14,
+      "total_samples": 1569,
+      "median_samples_per_round": 112.5,
+      "mean_samples_per_round": 112.1,
+      "median_interarrival_sec": 2.12,
+      "effective_cadence_samples_per_min": 23.0
+    },
+    {
+      "session_id": 4,
+      "label": "Session 4 (Rounds 182-377)",
+      "collector_pid": 18829,
+      "round_start": 182,
+      "round_end": 377,
+      "round_count": 196,
+      "total_samples": 16902,
+      "median_samples_per_round": 91.0,
+      "mean_samples_per_round": 86.2,
+      "median_interarrival_sec": 3.91,
+      "effective_cadence_samples_per_min": 18.4
+    },
+    {
+      "session_id": 5,
+      "label": "Session 5 (Rounds 378-401)",
+      "collector_pid": 79578,
+      "round_start": 378,
+      "round_end": 401,
+      "round_count": 24,
+      "total_samples": 1349,
+      "median_samples_per_round": 61.0,
+      "mean_samples_per_round": 56.2,
+      "median_interarrival_sec": 5.04,
+      "effective_cadence_samples_per_min": 12.6
+    },
+    {
+      "session_id": 6,
+      "label": "Session 6 (Rounds 402-500)",
+      "collector_pid": 92515,
+      "round_start": 402,
+      "round_end": 500,
+      "round_count": 99,
+      "total_samples": 5669,
+      "median_samples_per_round": 58,
+      "mean_samples_per_round": 57.3,
+      "median_interarrival_sec": 5.38,
+      "effective_cadence_samples_per_min": 11.8
+    }
+  ],
+  "blocks_of_25": [
+    {
+      "block_id": 1,
+      "round_range": "1..25",
+      "median_sample_count": 300,
+      "median_interval_sec": 1.0,
+      "p95_interval_sec": 1.02,
+      "effective_samples_per_min": 60.2
+    },
+    {
+      "block_id": 2,
+      "round_range": "26..50",
+      "median_sample_count": 299,
+      "median_interval_sec": 1.0,
+      "p95_interval_sec": 1.06,
+      "effective_samples_per_min": 60.0
+    },
+    {
+      "block_id": 3,
+      "round_range": "51..75",
+      "median_sample_count": 246,
+      "median_interval_sec": 1.01,
+      "p95_interval_sec": 2.0,
+      "effective_samples_per_min": 49.5
+    },
+    {
+      "block_id": 4,
+      "round_range": "76..100",
+      "median_sample_count": 178,
+      "median_interval_sec": 1.93,
+      "p95_interval_sec": 2.98,
+      "effective_samples_per_min": 35.8
+    },
+    {
+      "block_id": 5,
+      "round_range": "101..125",
+      "median_sample_count": 126,
+      "median_interval_sec": 2.04,
+      "p95_interval_sec": 3.02,
+      "effective_samples_per_min": 25.4
+    },
+    {
+      "block_id": 6,
+      "round_range": "126..150",
+      "median_sample_count": 126,
+      "median_interval_sec": 2.05,
+      "p95_interval_sec": 3.03,
+      "effective_samples_per_min": 25.4
+    },
+    {
+      "block_id": 7,
+      "round_range": "151..175",
+      "median_sample_count": 121,
+      "median_interval_sec": 2.09,
+      "p95_interval_sec": 3.71,
+      "effective_samples_per_min": 24.5
+    },
+    {
+      "block_id": 8,
+      "round_range": "176..200",
+      "median_sample_count": 109,
+      "median_interval_sec": 2.32,
+      "p95_interval_sec": 4.05,
+      "effective_samples_per_min": 22.0
+    },
+    {
+      "block_id": 9,
+      "round_range": "201..225",
+      "median_sample_count": 100,
+      "median_interval_sec": 2.59,
+      "p95_interval_sec": 4.19,
+      "effective_samples_per_min": 20.2
+    },
+    {
+      "block_id": 10,
+      "round_range": "226..250",
+      "median_sample_count": 95,
+      "median_interval_sec": 3.58,
+      "p95_interval_sec": 4.43,
+      "effective_samples_per_min": 19.2
+    },
+    {
+      "block_id": 11,
+      "round_range": "251..275",
+      "median_sample_count": 96,
+      "median_interval_sec": 3.63,
+      "p95_interval_sec": 4.49,
+      "effective_samples_per_min": 19.4
+    },
+    {
+      "block_id": 12,
+      "round_range": "276..300",
+      "median_sample_count": 91,
+      "median_interval_sec": 3.92,
+      "p95_interval_sec": 5.0,
+      "effective_samples_per_min": 18.3
+    },
+    {
+      "block_id": 13,
+      "round_range": "301..325",
+      "median_sample_count": 78,
+      "median_interval_sec": 4.04,
+      "p95_interval_sec": 5.11,
+      "effective_samples_per_min": 15.9
+    },
+    {
+      "block_id": 14,
+      "round_range": "326..350",
+      "median_sample_count": 71,
+      "median_interval_sec": 4.79,
+      "p95_interval_sec": 5.2,
+      "effective_samples_per_min": 14.4
+    },
+    {
+      "block_id": 15,
+      "round_range": "351..375",
+      "median_sample_count": 70,
+      "median_interval_sec": 4.76,
+      "p95_interval_sec": 5.39,
+      "effective_samples_per_min": 14.2
+    },
+    {
+      "block_id": 16,
+      "round_range": "376..400",
+      "median_sample_count": 61,
+      "median_interval_sec": 5.04,
+      "p95_interval_sec": 6.24,
+      "effective_samples_per_min": 12.6
+    },
+    {
+      "block_id": 17,
+      "round_range": "401..425",
+      "median_sample_count": 60,
+      "median_interval_sec": 5.04,
+      "p95_interval_sec": 6.16,
+      "effective_samples_per_min": 12.7
+    },
+    {
+      "block_id": 18,
+      "round_range": "426..450",
+      "median_sample_count": 61,
+      "median_interval_sec": 5.02,
+      "p95_interval_sec": 6.04,
+      "effective_samples_per_min": 12.4
+    },
+    {
+      "block_id": 19,
+      "round_range": "451..475",
+      "median_sample_count": 58,
+      "median_interval_sec": 5.42,
+      "p95_interval_sec": 6.12,
+      "effective_samples_per_min": 11.8
+    },
+    {
+      "block_id": 20,
+      "round_range": "476..500",
+      "median_sample_count": 54,
+      "median_interval_sec": 5.8,
+      "p95_interval_sec": 6.32,
+      "effective_samples_per_min": 11.0
+    }
+  ]
+}
