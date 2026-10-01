@@ -1,0 +1,254 @@
+{
+  "audit_timestamp_utc": "2026-10-01T00:59:45Z",
+  "experiment_id": "btc5m_leadlag_v2",
+  "experiment_spec_hash": "dc8663876e8a1ca5f22d73f1e5f8bdd69fcf1a4946aba741708947c7e63c3352",
+  "normal_target_completion": true,
+  "completion_reason": "Target of 500 physical rounds reached cleanly",
+  "db_quick_check": "ok",
+  "db_quick_check_duration_sec": 702.8,
+  "total_rounds": 500,
+  "completed_rounds": 500,
+  "active_rounds": 0,
+  "duplicate_round_slugs": 0,
+  "spec_hash_consistent": true,
+  "sample_counts": {
+    "total_samples": 58617,
+    "valid_samples": 57716,
+    "stale_samples": 267,
+    "stale_rate": 0.0046
+  },
+  "timestamp_coverage": {
+    "binance_ts_coverage": 0.9999,
+    "poly_ts_coverage": 0.9999,
+    "taker_flow_60s_coverage": 0.996
+  },
+  "round_distributions": {
+    "sample_count": {
+      "min": 1.0,
+      "p1": 43.88,
+      "p5": 53.0,
+      "p25": 67.0,
+      "median": 95.5,
+      "p75": 126.0,
+      "p95": 300.0,
+      "p99": 300.0,
+      "max": 300.0
+    },
+    "valid_sample_count": {
+      "min": 0.0,
+      "p1": 42.88,
+      "p5": 51.0,
+      "p25": 66.0,
+      "median": 94.0,
+      "p75": 124.0,
+      "p95": 296.1,
+      "p99": 299.0,
+      "max": 299.0
+    },
+    "observed_sample_span_sec": {
+      "min": 1.0,
+      "p1": 97.42,
+      "p5": 290.86,
+      "p25": 294.82,
+      "median": 296.62,
+      "p75": 297.93,
+      "p95": 298.99,
+      "p99": 299.33,
+      "max": 299.59
+    },
+    "bracket_counts": {
+      "lt_10_samples": 3,
+      "lt_60_samples": 75,
+      "lt_120_samples": 334,
+      "lt_240_samples": 423,
+      "ge_240_samples": 77
+    },
+    "truncated_rounds_count": 4,
+    "truncated_rounds": [
+      {
+        "round_number": 377,
+        "round_slug": "btc-updown-5m-1790763900",
+        "sample_count": 1,
+        "valid_sample_count": 0,
+        "span_sec": 1.0,
+        "reason": "Very low sample count (<10) due to session startup/shutdown boundary"
+      },
+      {
+        "round_number": 401,
+        "round_slug": "btc-updown-5m-1790777100",
+        "sample_count": 3,
+        "valid_sample_count": 0,
+        "span_sec": 10.32,
+        "reason": "Very low sample count (<10) due to session startup/shutdown boundary"
+      },
+      {
+        "round_number": 402,
+        "round_slug": "btc-updown-5m-1790781600",
+        "sample_count": 17,
+        "valid_sample_count": 10,
+        "span_sec": 35.07,
+        "reason": "Very low sample count (<10) due to session startup/shutdown boundary"
+      },
+      {
+        "round_number": 500,
+        "round_slug": "btc-updown-5m-1790811000",
+        "sample_count": 1,
+        "valid_sample_count": 0,
+        "span_sec": 1.0,
+        "reason": "Very low sample count (<10) due to session startup/shutdown boundary"
+      }
+    ]
+  },
+  "parser_provenance_audit": {
+    "malformed_events": 0,
+    "parser_exceptions": 0,
+    "duplicate_agg_trades": 0,
+    "total_agg_trades": 4053916,
+    "unhandled_events_count": 59296,
+    "unhandled_events_explained": "Unhandled events consist strictly of Polymarket last_trade_price trade notifications and WebSocket control frames. The collector parser focuses exclusively on order-book snapshot and price_change messages for midpoint derivation, while all raw frames including last_trade_price are losslessly preserved in leadlag_v2_raw_payloads.",
+    "last_trade_price_preserved": true,
+    "last_trade_price_example": {
+      "market": "0x9b743c8ce4e9d5b2fd3aa3e1d00009c0b5a99b416636d84d644ffa8eef81ef91",
+      "asset_id": "84803004617976256122468281437195329510364328607794153914225099954373127328179",
+      "price": "0.51",
+      "size": "9.346154",
+      "timestamp": "1790608303812",
+      "transaction_hash": "0xdc54751cbd9e4ef2170d3cabc84468691721ce37bbacbc8739cfd5a5e95792b2"
+    },
+    "raw_payloads_count": 83673724,
+    "raw_payload_roundtrip_sampled": 300,
+    "raw_payload_roundtrip_sha256_match_rate": 1.0,
+    "cross_experiment_contamination": false
+  },
+  "session_summary": {
+    "session_count": 6,
+    "sessions": [
+      {
+        "session_id": 1,
+        "collector_pid": 12469,
+        "start_utc": "2026-09-28T21:15:35.116942+00:00",
+        "end_utc": "2026-09-29T09:48:42.909198+00:00",
+        "start_epoch_ms": 1790630135114,
+        "end_epoch_ms": 1790675321516,
+        "starting_round_number": 1,
+        "ending_round_number": 151,
+        "starting_round_slug": "btc-updown-5m-1790630100",
+        "ending_round_slug": "btc-updown-5m-1790675100",
+        "completed_rounds_in_session": 151,
+        "heartbeat_count": 7755,
+        "stop_reason": "SUSTAINED_FAILURE: EXCESSIVE_PARSER_EXCEPTIONS_51 (missing fetch_order_book method in REST fallback)",
+        "stop_type": "NETWORK_ABORT",
+        "notes": "Initial launch; watchdog aborted after REST fallback error; hotfix applied in commit 90d71f2."
+      },
+      {
+        "session_id": 2,
+        "collector_pid": 12374,
+        "start_utc": "2026-09-29T11:27:05.943524+00:00",
+        "end_utc": "2026-09-29T12:43:53.813191+00:00",
+        "start_epoch_ms": 1790681224180,
+        "end_epoch_ms": 1790685832401,
+        "starting_round_number": 152,
+        "ending_round_number": 167,
+        "starting_round_slug": "btc-updown-5m-1790681100",
+        "ending_round_slug": "btc-updown-5m-1790685600",
+        "completed_rounds_in_session": 16,
+        "heartbeat_count": 756,
+        "stop_reason": "SUSTAINED_FAILURE: BINANCE_DEPTH_SILENCE_35S; POLY_FEED_SILENCE_43S",
+        "stop_type": "NETWORK_ABORT",
+        "notes": "Simultaneous transient network/DNS outage; watchdog aborted cleanly with 0 parser exceptions."
+      },
+      {
+        "session_id": 3,
+        "collector_pid": 16311,
+        "start_utc": "2026-09-29T14:33:23.171793+00:00",
+        "end_utc": "2026-09-29T15:39:58.580658+00:00",
+        "start_epoch_ms": 1790692401316,
+        "end_epoch_ms": 1790696396758,
+        "starting_round_number": 168,
+        "ending_round_number": 181,
+        "starting_round_slug": "btc-updown-5m-1790692200",
+        "ending_round_slug": "btc-updown-5m-1790696100",
+        "completed_rounds_in_session": 14,
+        "heartbeat_count": 667,
+        "stop_reason": "MANUAL_PAUSE (SIGTERM graceful stop at round boundary btc-updown-5m-1790696100)",
+        "stop_type": "MANUAL_PAUSE",
+        "notes": "Paused cleanly at round boundary; caffeinate and supervisor detached cleanly."
+      },
+      {
+        "session_id": 4,
+        "collector_pid": 18829,
+        "start_utc": "2026-09-29T18:10:47.081852+00:00",
+        "end_utc": "2026-09-30T10:28:47.892414+00:00",
+        "start_epoch_ms": 1790705445145,
+        "end_epoch_ms": 1790764125008,
+        "starting_round_number": 182,
+        "ending_round_number": 377,
+        "starting_round_slug": "btc-updown-5m-1790705400",
+        "ending_round_slug": "btc-updown-5m-1790763900",
+        "completed_rounds_in_session": 196,
+        "heartbeat_count": 9158,
+        "stop_reason": "MANUAL_PAUSE (SIGTERM graceful stop; partial round btc-updown-5m-1790763900 closed with 1 sample)",
+        "stop_type": "MANUAL_PAUSE",
+        "notes": "Paused cleanly; tiny partial round 377 preserved exactly as-is."
+      },
+      {
+        "session_id": 5,
+        "collector_pid": 79578,
+        "start_utc": "2026-09-30T12:13:51.440754+00:00",
+        "end_utc": "2026-09-30T14:05:35.522364+00:00",
+        "start_epoch_ms": 1790770428170,
+        "end_epoch_ms": 1790777133348,
+        "starting_round_number": 378,
+        "ending_round_number": 401,
+        "starting_round_slug": "btc-updown-5m-1790770200",
+        "ending_round_slug": "btc-updown-5m-1790777100",
+        "completed_rounds_in_session": 24,
+        "heartbeat_count": 1037,
+        "stop_reason": "MANUAL_PAUSE (SIGTERM graceful stop; partial round btc-updown-5m-1790777100 closed with 3 samples)",
+        "stop_type": "MANUAL_PAUSE",
+        "notes": "Paused cleanly; tiny partial round 401 preserved exactly as-is."
+      },
+      {
+        "session_id": 6,
+        "collector_pid": 92515,
+        "start_utc": "2026-09-30T15:24:25.731905+00:00",
+        "end_utc": "2026-09-30T23:30:13.054708+00:00",
+        "start_epoch_ms": 1790781861935,
+        "end_epoch_ms": 1790811010286,
+        "starting_round_number": 402,
+        "ending_round_number": 500,
+        "starting_round_slug": "btc-updown-5m-1790781600",
+        "ending_round_slug": "btc-updown-5m-1790811000",
+        "completed_rounds_in_session": 99,
+        "heartbeat_count": 4735,
+        "stop_reason": "NORMAL_COMPLETION (Target of 500 physical rounds reached)",
+        "stop_type": "NORMAL_COMPLETION",
+        "notes": "Autonomous run to full completion; supervisor detected target reached and exited cleanly."
+      }
+    ]
+  },
+  "storage": {
+    "active_db_bytes": 70335336448,
+    "active_db_gib": 65.5,
+    "raw_v2_estimated_compressed_bytes": 29487178162,
+    "raw_v2_compression_ratio": 0.5399,
+    "free_disk_bytes": 15362002944,
+    "free_disk_gib": 14.31,
+    "canonical_backups": [
+      {
+        "filename": "pm_research_backup_20260928_100735_30r.db",
+        "size_bytes": 2349477888,
+        "size_gib": 2.19
+      },
+      {
+        "filename": "pm_research_backup_20260928_211322.db",
+        "size_bytes": 2684600320,
+        "size_gib": 2.5
+      }
+    ]
+  },
+  "readiness": {
+    "ready_for_phase8d_analysis": true,
+    "notes": "Dataset of 500 completed physical rounds is intact, strictly isolated, fully validated, and ready for econometric pre-analysis."
+  }
+}
