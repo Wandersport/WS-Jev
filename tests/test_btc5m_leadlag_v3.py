@@ -259,3 +259,14 @@ def test_v3_round_lifecycle_in_memory(tmp_path: Path):
     assert item[1]["total_samples"] == 300
     assert item[1]["valid_samples"] == 295
 
+
+def test_v3_pilot_audit_percentile():
+    """Verify statistical percentile helper in pilot audit."""
+    from pm_research.research.btc5m.leadlag_v3_pilot_audit import _percentile
+
+    data = [10.0, 20.0, 30.0, 40.0, 50.0]
+    assert _percentile(data, 50) == 30.0
+    assert _percentile(data, 0) == 10.0
+    assert _percentile(data, 100) == 50.0
+    assert _percentile([], 50) == 0.0
+
