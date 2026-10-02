@@ -1,0 +1,5 @@
+target,volatility_quartile,n_rounds,n_pairs,realized_vol_min_bps,realized_vol_median_bps,realized_vol_max_bps,mean_equal_round_d,pair_weighted_mse_improvement,round_win_rate_pct,b0_mse,b1_mse
+delta_q,Q1,63,16557,2.06,4.60,6.05,0.00000509,0.00000430,50.79,0.00164466,0.00164036
+delta_q,Q2,63,16569,6.05,6.91,8.23,0.00000170,0.00000066,53.97,0.00188640,0.00188574
+delta_q,Q3,62,16284,8.36,9.77,11.39,-0.00002065,-0.00002063,59.68,0.00185851,0.00187914
+delta_q,Q4,62,16026,11.56,15.77,68.77,-0.00028325,-0.00032251,64.52,0.00156527,0.00188779

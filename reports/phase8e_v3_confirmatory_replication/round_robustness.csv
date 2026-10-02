@@ -1,0 +1,3 @@
+target,total_rounds,aggregate_d_sum,top_10_rounds_share_pct,top_10pct_rounds_count,top_10pct_rounds_share_pct,mean_d_excluding_top_10pct,win_rate_excluding_top_10pct
+delta_q,250,-0.01841420,0.00,25,0.00,-0.00009345,52.44
+delta_logit_q,250,-0.96937357,0.00,25,0.00,-0.00490220,51.11

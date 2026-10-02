@@ -1,0 +1,23 @@
+{
+  "canonical_experiment_id": "btc5m_leadlag_v3_replication_2s",
+  "original_frozen_spec": "docs/BTC5M_LEADLAG_REPLICATION_2S_SPEC.md",
+  "original_spec_hash": "bfe5b0553a7143dd8941239dd481cf0e86499b54338dc6717565d1d9dc28fa53",
+  "preunblinding_addendum": "docs/BTC5M_LEADLAG_REPLICATION_2S_PREUNBLINDING_DECISION_ADDENDUM.md",
+  "addendum_sha256": "0a7b1a2dbeeb0c6c6d6bc09e5c8a8f1052a16e6622f82139fa96ed09ea9e8ed1",
+  "frozen_model_path": "models/frozen_v2_replication_models_2s.json",
+  "frozen_model_hash": "ee914a59072320d142944530957036c325632f941432d934f472e689dc7f1c77",
+  "unblinding_status": "FIRST_AND_FINAL_AUTHORIZED_UNBLINDING",
+  "unblinding_timestamp_utc": "2026-10-02T20:07:50.088012+00:00",
+  "endpoint_hierarchy": {
+    "primary_confirmatory_endpoint": "delta_q_2s",
+    "secondary_supportive_endpoint": "delta_logit_q_2s",
+    "multiplicity_treatment": "Hierarchical ordering (no alpha penalty on primary confirmatory endpoint)"
+  },
+  "primary_estimand": "Equal-weight mean of round-level loss improvement d_r across 250 physical rounds",
+  "primary_cluster_unit": "Physical round (round_slug)",
+  "sample_counts": {
+    "physical_rounds": 250,
+    "primary_pairs_500ms": 65436,
+    "sensitivity_pairs_250ms": 65430
+  }
+}

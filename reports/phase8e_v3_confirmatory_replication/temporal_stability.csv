@@ -1,0 +1,7 @@
+target,block,round_range,n_rounds,n_pairs,mean_d,pair_weighted_mse_improvement,round_win_rate_pct,direction
+delta_q,Early,1-83,83,21911,-0.00000337,-0.00000454,48.19,NON_POSITIVE
+delta_q,Middle,84-166,83,21818,-0.00001542,-0.00001690,54.22,NON_POSITIVE
+delta_q,Late,167-250,84,21707,-0.00020065,-0.00022823,69.05,NON_POSITIVE
+delta_logit_q,Early,1-83,83,21911,-0.00009545,-0.00019142,53.01,NON_POSITIVE
+delta_logit_q,Middle,84-166,83,21818,-0.00148412,-0.00165676,54.22,NON_POSITIVE
+delta_logit_q,Late,167-250,84,21707,-0.00997940,-0.01140852,60.71,NON_POSITIVE

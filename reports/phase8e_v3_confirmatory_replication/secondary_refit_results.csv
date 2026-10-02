@@ -1,0 +1,3 @@
+target,model_type,n_pairs,n_rounds,b0_mse_cv,b1_mse_cv,pair_weighted_mse_improvement,mean_equal_round_d,b0_r2_cv,b1_r2_cv,delta_r2_cv,round_win_rate_pct,round_t_stat,round_p_value
+delta_q,Ridge L2=1.0 (5-Fold GroupKFold by Round),65436,250,0.00173885,0.00172310,0.00001575,0.00001653,0.002107,0.011148,0.009041,69.20,5.0265,0.00000096
+delta_logit_q,Ridge L2=1.0 (5-Fold GroupKFold by Round),65436,250,0.08814950,0.08730631,0.00084320,0.00088899,0.017354,0.026754,0.009400,72.40,6.8122,0.00000000

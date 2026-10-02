@@ -270,3 +270,50 @@ def test_v3_pilot_audit_percentile():
     assert _percentile(data, 100) == 50.0
     assert _percentile([], 50) == 0.0
 
+
+def test_v3_confirmatory_unblinding_artifacts():
+    """Verify Phase 8E confirmatory replication artifacts and verdict integrity."""
+    import json
+    from pm_research.research.btc5m.leadlag_v3_confirmatory_unblinding import (
+        OUTPUT_DIR,
+        student_t_two_sided_p,
+        compute_percentiles,
+    )
+
+    # 1. Statistical helper tests
+    p_val_2 = student_t_two_sided_p(2.0, 249)
+    assert 0.045 < p_val_2 < 0.050
+    p_val_zero = student_t_two_sided_p(0.0, 249)
+    assert abs(p_val_zero - 1.0) < 1e-4
+
+    pcts = compute_percentiles([10.0, 20.0, 30.0, 40.0, 50.0], [50.0])
+    assert pcts[50.0] == 30.0
+
+    # 2. Artifact file existence
+    expected_files = [
+        "README.md",
+        "final_replication_verdict.json",
+        "preregistration_verification.json",
+        "primary_transport_results.csv",
+        "secondary_refit_results.csv",
+        "timing_sensitivity.csv",
+        "round_robustness.csv",
+        "volatility_heterogeneity.csv",
+        "temporal_stability.csv",
+    ]
+    for fname in expected_files:
+        p = OUTPUT_DIR / fname
+        assert p.exists(), f"Missing artifact: {p}"
+
+    # 3. Verdict contents
+    verdict_path = OUTPUT_DIR / "final_replication_verdict.json"
+    with open(verdict_path) as f:
+        v = json.load(f)
+
+    assert v["canonical_experiment_id"] == "btc5m_leadlag_v3_replication_2s"
+    assert v["final_replication_verdict"] == "NOT_REPLICATED"
+    assert v["primary_results"]["n_pairs"] == 65436
+    assert v["primary_results"]["n_rounds"] == 250
+    assert v["preregistered_gates"]["gate_integrity"] is True
+
+
