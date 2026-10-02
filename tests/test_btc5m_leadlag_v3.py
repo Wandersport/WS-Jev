@@ -361,4 +361,48 @@ def test_v3_post_unblinding_forensics_artifacts():
     assert "binance_return_since_open_bps" not in v4["feature_set_b1_stationary"]
 
 
+def test_v4_confirmatory_spec_and_frozen_model():
+    """Verify Phase 8E.1 -> v4 pre-registration frozen spec and frozen model integrity."""
+    import hashlib
+    import json
+    from pathlib import Path
+
+    spec_path = Path("docs/BTC5M_LEADLAG_V4_CONFIRMATORY_SPEC.md")
+    model_path = Path("models/frozen_v4_confirmatory_models_2s.json")
+
+    assert spec_path.exists(), "v4 spec markdown missing"
+    assert model_path.exists(), "v4 frozen model JSON missing"
+
+    spec_sha = hashlib.sha256(spec_path.read_bytes()).hexdigest()
+    model_sha = hashlib.sha256(model_path.read_bytes()).hexdigest()
+
+    assert spec_sha == "660ffe7b20813253227b241ae25f03ff2372ea617455c755de484d7ecd2c43de"
+    assert model_sha == "59d31330b181b2a2c85777f9c15df2223e75b161f0afcdfa68f8ba38c7ea65fd"
+
+    with open(model_path) as f:
+        m = json.load(f)
+
+    assert m["model_version"] == "v4_confirmatory_frozen_2s"
+    assert m["status"] == "FROZEN_CONFIRMATORY_MODEL"
+    assert m["target_horizon_sec"] == 2
+    assert m["clipping_bound"] == [-5.0, 5.0]
+    assert len(m["b0_feature_names"]) == 9
+    assert len(m["b1_feature_names"]) == 21
+    assert "binance_mid_price" not in m["b1_feature_names"]
+    assert "binance_return_since_open_bps" not in m["b1_feature_names"]
+
+    # Verify both endpoints are populated with correct coefficients
+    for target in ["delta_q", "delta_logit_q"]:
+        assert target in m["models"]
+        b0 = m["models"][target]["b0"]
+        b1 = m["models"][target]["b1"]
+        assert len(b0["coefficients"]) == 9
+        assert len(b0["scaler_means"]) == 9
+        assert len(b0["scaler_stds"]) == 9
+        assert len(b1["coefficients"]) == 21
+        assert len(b1["scaler_means"]) == 21
+        assert len(b1["scaler_stds"]) == 21
+
+
+
 

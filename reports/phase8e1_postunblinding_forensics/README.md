@@ -84,13 +84,15 @@
 
 ## Scientific Interpretation & Next Steps
 
-- **Claim A: Frozen Model Transport**: **NOT_REPLICATED**. The immutable frozen model artifact failed prospective transport due to unclipped non-stationary price-level features.
-- **Claim B: Feature-Family Lead-Lag Predictability**: **SUPPORTED**. Public Binance order flow features contain statistically robust incremental predictive power for native Polymarket 2-second midpoint movements out-of-sample (confirmed via same-spec refit $\Delta R^2 = +0.009041$, $t = +5.03$, and chronological forward validation win rate $72.5\%$).
-- **Claim C: Cross-Regime Stable Signal**: **NOT YET CONFIRMED**. Requires a newly frozen scale-invariant specification (v4) with bounded standardization tested in a fresh, prospective experiment.
+- **Claim A: Frozen Model Transport**: **NOT_REPLICATED**. The immutable Phase 8E frozen model artifact failed prospective transport due to unclipped non-stationary price-level features.
+- **Claim B: Candidate Lead-Lag Architecture**: **EXPLORATORY EVIDENCE ONLY**. Phase 8E.1 provides exploratory evidence for a persistent +2s lead-lag candidate, but independent prospective confirmation is still required.
+- **Claim C: Chronological Forward Validation**:
+  - Across 200 out-of-sample forward-chained rounds (rounds 51–250): aggregate mean $d = +0.00000846 > 0$, win rate $72.5\%$ ($145/200$ rounds won), $t = +1.56$, $p = 0.060$. Fold 1 was negative ($-0.00002362$), while Folds 2–4 were positive ($+0.00000894, +0.00000461, +0.00003940$). Because $p = 0.060 > 0.05$, this trajectory is NOT independently significant at $\alpha = 0.05$ and must be prospectively confirmed.
+- **Claim D: Cross-Regime Transportability**: **NOT YET CONFIRMED**. Requires a newly frozen scale-invariant specification (v4) with bounded standardization tested in a fresh, prospective experiment.
 
 ### Prospective v4 Replication Design
-- Specification drafted in `v4_confirmatory_spec_draft.json`.
+- Specification finalized in `docs/BTC5M_LEADLAG_V4_CONFIRMATORY_SPEC.md` and models in `models/frozen_v4_confirmatory_models_2s.json`.
 - Restricts features strictly to 21 scale-invariant variables (excludes `binance_mid_price` and `binance_return_since_open_bps`).
-- Enforces $[-5.0, +5.0]\sigma$ standardization clipping.
-- Recommends $N = 500$ physical rounds (providing $\ge 99\%$ power under moderate within-regime conditions and $\ge 70\%$ power under conservative forward chaining).
-- **Status**: DRAFT ONLY. Not launched.
+- Enforces $[-5.0, +5.0]\sigma$ hard standardization clipping.
+- Preregisters $N = 750$ physical rounds to achieve $\ge 80\%$ power ($85.4\%$) under the conservative forward-chaining distribution ($d = 0.110$).
+- **Status**: PRE-REGISTRATION FROZEN. DO NOT LAUNCH COLLECTION YET.
