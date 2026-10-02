@@ -274,10 +274,11 @@ def test_v3_pilot_audit_percentile():
 def test_v3_confirmatory_unblinding_artifacts():
     """Verify Phase 8E confirmatory replication artifacts and verdict integrity."""
     import json
+
     from pm_research.research.btc5m.leadlag_v3_confirmatory_unblinding import (
         OUTPUT_DIR,
-        student_t_two_sided_p,
         compute_percentiles,
+        student_t_two_sided_p,
     )
 
     # 1. Statistical helper tests
@@ -315,5 +316,49 @@ def test_v3_confirmatory_unblinding_artifacts():
     assert v["primary_results"]["n_pairs"] == 65436
     assert v["primary_results"]["n_rounds"] == 250
     assert v["preregistered_gates"]["gate_integrity"] is True
+
+
+def test_v3_post_unblinding_forensics_artifacts():
+    """Verify Phase 8E.1 post-unblinding forensic analysis artifacts and v4 draft."""
+    import json
+
+    from pm_research.research.btc5m.leadlag_v3_forensics import (
+        OUTPUT_DIR as FORENSICS_DIR,
+    )
+    from pm_research.research.btc5m.leadlag_v3_forensics import (
+        normal_power,
+        pearson_r,
+    )
+
+    # 1. Math functions
+    assert abs(pearson_r([1.0, 2.0, 3.0], [2.0, 4.0, 6.0]) - 1.0) < 1e-6
+    assert abs(pearson_r([1.0, 2.0, 3.0], [-2.0, -4.0, -6.0]) - (-1.0)) < 1e-6
+    pow_500 = normal_power(0.312, 500)
+    assert pow_500 > 0.99
+
+    # 2. Forensic artifact file existence
+    expected_files = [
+        "README.md",
+        "feature_shift_decomposition.csv",
+        "standardization_forensics.csv",
+        "chronological_validation.csv",
+        "scale_invariant_comparison.csv",
+        "price_regime_sensitivity.csv",
+        "v4_confirmatory_spec_draft.json",
+    ]
+    for fname in expected_files:
+        p = FORENSICS_DIR / fname
+        assert p.exists(), f"Missing forensics artifact: {p}"
+
+    # 3. v4 draft spec verification
+    v4_path = FORENSICS_DIR / "v4_confirmatory_spec_draft.json"
+    with open(v4_path) as f:
+        v4 = json.load(f)
+
+    assert v4["status"] == "DRAFT_PREPARED_DO_NOT_LAUNCH"
+    assert v4["total_feature_counts"]["b1_stationary"] == 21
+    assert "binance_mid_price" not in v4["feature_set_b1_stationary"]
+    assert "binance_return_since_open_bps" not in v4["feature_set_b1_stationary"]
+
 
 

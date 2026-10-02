@@ -1,0 +1,76 @@
+{
+  "status": "DRAFT_PREPARED_DO_NOT_LAUNCH",
+  "version": "4.0.0",
+  "canonical_experiment_id": "btc5m_leadlag_v4_confirmatory_2s",
+  "hypothesis": "+2.0 seconds horizon only (L = 2s)",
+  "primary_target": "delta_q_2s (q_{t+2s} - q_t)",
+  "secondary_target": "delta_logit_q_2s",
+  "design_remediations_from_phase8e": [
+    "Exclude absolute BTC price level (binance_mid_price) to prevent out-of-distribution regime shift failure",
+    "Exclude cumulative return since open (binance_return_since_open_bps) to preserve intra-round stationarity",
+    "Mandate bounded standardization with z-score clipping in [-5.0, +5.0] to prevent catastrophic quadratic errors during microstructure liquidity vacuums",
+    "Preregister explicit sample size powered against forward-chaining effect distribution"
+  ],
+  "feature_set_b0_polymarket_controls": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s"
+  ],
+  "feature_set_b1_stationary": [
+    "poly_midpoint",
+    "poly_spread",
+    "seconds_remaining",
+    "poly_return_1s",
+    "poly_return_2s",
+    "poly_return_3s",
+    "poly_return_5s",
+    "poly_return_10s",
+    "poly_return_30s",
+    "binance_microprice_offset_bps",
+    "binance_spread_bps",
+    "binance_return_1s_bps",
+    "binance_return_2s_bps",
+    "binance_return_3s_bps",
+    "binance_return_5s_bps",
+    "binance_return_10s_bps",
+    "binance_return_30s_bps",
+    "binance_return_60s_bps",
+    "binance_top1_depth_imbalance",
+    "binance_top5_depth_imbalance",
+    "binance_top20_depth_imbalance"
+  ],
+  "total_feature_counts": {
+    "b0": 9,
+    "b1_stationary": 21
+  },
+  "power_and_sample_size_analysis": {
+    "conservative_scenario_cohen_d": 0.11,
+    "moderate_scenario_cohen_d": 0.312,
+    "power_table": {
+      "rounds_250": {
+        "power_conservative": "41.3%",
+        "power_moderate": "99.9%"
+      },
+      "rounds_350": {
+        "power_conservative": "53.9%",
+        "power_moderate": "100.0%"
+      },
+      "rounds_500": {
+        "power_conservative": "69.1%",
+        "power_moderate": "100.0%"
+      },
+      "rounds_750": {
+        "power_conservative": "85.4%",
+        "power_moderate": "100.0%"
+      }
+    },
+    "recommended_target_rounds": 500,
+    "rationale": "500 physical rounds provides 100% power under moderate within-regime persistence and ~70% power under conservative forward-chaining with startup noise."
+  }
+}
